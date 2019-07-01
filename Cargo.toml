@@ -1,0 +1,23 @@
+[package]
+name = "osrank-experiments"
+version = "0.1.0"
+authors = ["Alfredo Di Napoli <alfredo.dinapoli@gmail.com>"]
+edition = "2018"
+
+[package.metadata]
+assets = "data"
+
+[lib]
+
+name = "osrank"
+path = "src/lib.rs"
+
+[[bin]]
+name = "osrank-test"
+path = "bin/main.rs"
+
+[dependencies]
+
+derive_more = "0.15.0"
+petgraph = "0.4.13"
+fraction = "0.6"
