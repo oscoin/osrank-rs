@@ -21,3 +21,5 @@ path = "bin/main.rs"
 derive_more = "0.15.0"
 petgraph = "0.4.13"
 fraction = "0.6"
+serde = { version = "1.0.60", features = ["derive"]}
+serde_json = "1.0.40"
