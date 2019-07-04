@@ -3,11 +3,12 @@ extern crate reqwest;
 extern crate serde;
 
 use csv::StringRecord;
-use reqwest::{Client, Url};
+use reqwest::Url;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use std::{thread, time};
 
+use std::collections::HashSet;
 use std::env;
 use std::error::Error;
 use std::fs::{File, OpenOptions};
@@ -47,28 +48,30 @@ struct GithubUser {
     id: u64,
 }
 
-fn call_github<T>(
-    http_client: &Client,
-    http_method: HttpMethod,
-    token: &str,
-    url_path: &str,
-) -> Result<T, Box<dyn Error>>
+type UniqueProjects = HashSet<String>;
+
+fn call_github<T>(http_method: HttpMethod, token: &str, url_path: &str) -> Result<T, Box<dyn Error>>
 where
     T: DeserializeOwned,
 {
+    let http_client = reqwest::Client::new();
     let bearer = format!("Bearer {}", token);
     match http_method {
         HttpMethod::Get => {
             let url: Url = format!("{}{}", GITHUB_BASE_URL, url_path)
                 .as_str()
                 .parse()?;
-            let res: Result<T, reqwest::Error> = http_client
+            let res = http_client
                 .get(url)
                 .header(reqwest::header::AUTHORIZATION, bearer.as_str())
                 .send()
-                .and_then(move |mut x| x.json());
-            match res {
-                Err(err) => Err(Box::new(err)),
+                .and_then(|x| x.error_for_status())
+                .and_then(move |mut x| x.text_with_charset("utf-8"))?;
+            match serde_json::from_str(&res) {
+                Err(err) => Err(Box::new(std::io::Error::new(
+                    ErrorKind::Other,
+                    format!("{:#?}, original json: {}", err, res),
+                ))),
                 Ok(v) => Ok(v),
             }
         }
@@ -83,6 +86,8 @@ fn deserialise_project<'a>(sr: &'a StringRecord) -> Option<Project<'a>> {
         let repository_fork = sr.get(24).and_then(|s: &str| match s {
             "t" => Some(true),
             "f" => Some(false),
+            "true" => Some(true),
+            "false" => Some(false),
             _ => None,
         });
         let repository_display_name = sr.get(54);
@@ -117,13 +122,15 @@ fn source_contributors(
     let projects_file = File::open(path)?;
 
     // Build the CSV reader and iterate over each record.
-    let mut rdr = csv::Reader::from_reader(projects_file);
+    let mut rdr = csv::ReaderBuilder::new()
+        .flexible(true)
+        .from_reader(projects_file);
     let mut contributions = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(format!("data/{}_contributions.csv", platform.to_lowercase()).as_str())?;
 
-    let client = reqwest::Client::new();
+    let mut unique_projects = HashSet::new();
 
     //Write the header
     contributions.write(b"MAINTAINER,REPO,CONTRIBUTIONS,NAME\n")?;
@@ -134,7 +141,12 @@ fn source_contributors(
         .filter(by_platform(platform))
     {
         if let Some(project) = deserialise_project(&result) {
-            extract_contribution(&mut contributions, project, &client, github_token)?;
+            extract_contribution(
+                &mut contributions,
+                &mut unique_projects,
+                project,
+                github_token,
+            )?;
         }
     }
 
@@ -154,43 +166,55 @@ fn extract_github_owner_and_repo(repo_url: &str) -> Option<(&str, &str)> {
 // supported.
 fn extract_contribution(
     contributions: &mut File,
+    unique_projects: &mut UniqueProjects,
     project: Project,
-    http_client: &Client,
     auth_token: &str,
 ) -> Result<(), Box<dyn Error>> {
     // If this is an authentic project and not a fork, proceed.
-    if !project.repository_fork {
+    if !project.repository_fork && unique_projects.get(project.repository_url) == None {
         match extract_github_owner_and_repo(project.repository_url) {
-            None => Err(Box::new(std::io::Error::new(
-                ErrorKind::Other,
-                "couldn't extract project metadata",
-            ))),
+            None => {
+                let err = Box::new(std::io::Error::new(
+                    ErrorKind::Other,
+                    "couldn't extract project metadata",
+                ));
+                println!("Skipping {} due to {:#?}", &project.repository_url, err);
+                Ok(())
+            }
             Some((owner, name)) => {
-                let stats: Vec<GithubContribution> = call_github(
-                    http_client,
+                unique_projects.insert(String::from(project.repository_url));
+                println!("Processing {}/{}", owner, name);
+                let res: Result<Vec<GithubContribution>, Box<dyn Error>> = call_github(
                     HttpMethod::Get,
                     auth_token,
                     format!("/repos/{}/{}/stats/contributors", owner, name).as_str(),
-                )?;
+                );
 
-                for contribution in stats {
-                    if is_maintainer(&contribution) {
-                        contributions.write(
-                            format!(
-                                "github@{},{},{},{}",
-                                contribution.author.login,
-                                project.repository_url,
-                                contribution.total,
-                                name
-                            )
-                            .as_bytes(),
-                        )?;
+                match res {
+                    Err(err) => {
+                        println!("Skipping {} due to {:#?}", &project.repository_url, err);
+                    }
+                    Ok(stats) => {
+                        for contribution in stats {
+                            if is_maintainer(&owner, &contribution) {
+                                contributions.write(
+                                    format!(
+                                        "github@{},{},{},{}\n",
+                                        contribution.author.login,
+                                        project.repository_url,
+                                        contribution.total,
+                                        project.project_name
+                                    )
+                                    .as_bytes(),
+                                )?;
+                            }
+                        }
                     }
                 }
 
-                //Wait 1 second to not overload Github and not hit the quota limit.
-                let one_sec = time::Duration::from_secs(1);
-                thread::sleep(one_sec);
+                //Wait 5 seconds to not overload Github and not hit the quota limit.
+                let delay = time::Duration::from_secs(5);
+                thread::sleep(delay);
                 Ok(())
             }
         }
@@ -203,8 +227,8 @@ fn extract_contribution(
 // for a project a user that has been contributed for more
 // than 6 months. Furthermore, it needs to have a somewhat steady contribution
 // history.
-fn is_maintainer(_stat: &GithubContribution) -> bool {
-    true
+fn is_maintainer(owner: &str, stat: &GithubContribution) -> bool {
+    stat.author.login == owner || { stat.total > 50 }
 }
 
 fn by_platform<'a>(platform: &'a str) -> Box<FnMut(&StringRecord) -> bool + 'a> {
