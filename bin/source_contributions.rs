@@ -1,3 +1,4 @@
+extern crate clap;
 extern crate csv;
 extern crate reqwest;
 extern crate serde;
@@ -6,6 +7,7 @@ extern crate failure;
 #[macro_use]
 extern crate failure_derive;
 
+use clap::{App, Arg};
 use csv::StringRecord;
 use reqwest::{Client, Url};
 use serde::de::DeserializeOwned;
@@ -213,7 +215,12 @@ fn deserialise_project<'a>(sr: &'a StringRecord) -> Option<Project<'a>> {
     }
 }
 
-fn source_contributors(github_token: &str, path: &str, platform: &str) -> Result<(), AppError> {
+fn source_contributors(
+    github_token: &str,
+    path: &str,
+    platform: &str,
+    resume_from: Option<&str>,
+) -> Result<(), AppError> {
     let projects_file = File::open(path)?;
 
     // Build the CSV reader and iterate over each record.
@@ -221,21 +228,34 @@ fn source_contributors(github_token: &str, path: &str, platform: &str) -> Result
         .flexible(true)
         .from_reader(projects_file);
     let mut contributions = OpenOptions::new()
-        .write(true)
-        .create_new(true)
+        .append(resume_from.is_some())
+        .write(resume_from.is_none())
+        .create_new(resume_from.is_none()) // Allow re-opening if we need to resume.
         .open(format!("data/{}_contributions.csv", platform.to_lowercase()).as_str())?;
 
     let mut unique_projects = HashSet::new();
     let http_client = reqwest::Client::new();
+    let mut skip_resumed_record = resume_from.is_some();
 
-    //Write the header
-    contributions.write(b"MAINTAINER,REPO,CONTRIBUTIONS,NAME\n")?;
+    //Write the header (if we are not resuming)
+    if resume_from.is_none() {
+        contributions.write(b"MAINTAINER,REPO,CONTRIBUTIONS,NAME\n")?;
+    }
 
     for result in rdr
         .records()
         .filter_map(|e| e.ok())
         .filter(by_platform(platform))
+        .skip_while(resumes(resume_from))
     {
+        // As we cannot know which is the /next/ element we need to process
+        // and we are resuming from the last (known) one, we need to skip it
+        // in order to not create a dupe.
+        if skip_resumed_record {
+            skip_resumed_record = false;
+            continue;
+        }
+
         if let Some(project) = deserialise_project(&result) {
             extract_contribution(
                 &http_client,
@@ -334,31 +354,58 @@ fn by_platform<'a>(platform: &'a str) -> Box<FnMut(&StringRecord) -> bool + 'a> 
     Box::new(move |e| e[1] == *platform)
 }
 
+// Returns false if the user didn't ask to resume the process from a particular
+// project URL. If the user supplied a project, it skips StringRecord entries
+// until it matches the input URL.
+fn resumes<'a>(resume_from: Option<&'a str>) -> Box<FnMut(&StringRecord) -> bool + 'a> {
+    Box::new(move |e| match resume_from {
+        None => false,
+        Some(repo_url) => Some(repo_url) != e.get(9),
+    })
+}
+
 const GITHUB_BASE_URL: &'static str = "https://api.github.com";
 
 fn main() -> Result<(), AppError> {
-    let args: Vec<String> = std::env::args().collect();
     let github_token = env::var("OSRANK_GITHUB_TOKEN")?;
 
-    if args.len() != 3 {
-        writeln!(
-            std::io::stderr(),
-            "Usage: {} <PATH-TO-CSV-FILE> <PLATFORM>",
-            &args[0]
-        )
-        .unwrap();
-        writeln!(
-            std::io::stderr(),
-            r#"Example: {} ~/Downloads/Libraries.io-open-data-1.4.0.tar.gz 
-            ~/Downloads/libraries-1.4.0-2018-12-22/projects_with_repository_fields-1.4.0-2018-12-22.csv
-            Cargo"#,
-            &args[0]
-        )
-        .unwrap();
-    }
+    let input_help = r###"Where to read the data from.
+        Example: ~/Downloads/libraries-1.4.0-2018-12-22/projects_with_repository_fields-1.4.0-2018-12-22.csv"###;
 
-    // Read the path to the file from the args
-    let (path, platform) = (&args[1], &args[2]);
+    let matches = App::new("Source contributions from Github")
+        .arg(
+            Arg::with_name("input")
+                .short("i")
+                .long("input")
+                .help(input_help)
+                .index(1)
+                .required(true),
+        )
+        .arg(
+            Arg::with_name("platform")
+                .short("p")
+                .long("platform")
+                .help("Example: Rust,NPM,Rubygems,..")
+                .index(2)
+                .required(true),
+        )
+        .arg(
+            Arg::with_name("resume-from")
+                .long("resume-from")
+                .help("which repository URL to resume from.")
+                .takes_value(true)
+                .required(false),
+        )
+        .get_matches();
 
-    source_contributors(&github_token, path, platform)
+    source_contributors(
+        &github_token,
+        matches
+            .value_of("input")
+            .expect("input parameter wasn't given."),
+        matches
+            .value_of("platform")
+            .expect("platform parameter wasn't given."),
+        matches.value_of("resume-from"),
+    )
 }

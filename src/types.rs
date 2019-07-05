@@ -1,6 +1,7 @@
 extern crate fraction;
 extern crate petgraph;
 
+use std::collections::HashSet;
 use std::fmt;
 
 use fraction::{Fraction, GenericFraction};
@@ -8,6 +9,14 @@ use petgraph::graph::NodeIndex;
 use petgraph::{Directed, Graph};
 
 type Osrank = Fraction;
+
+pub struct RandomWalks {
+    random_walks_internal: HashSet<RandomWalk>,
+}
+
+pub struct RandomWalk {
+    random_walk_internal: Vec<NodeIndex>,
+}
 
 #[derive(Debug)]
 pub struct Weight {
