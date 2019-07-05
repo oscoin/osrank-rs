@@ -3,7 +3,7 @@ extern crate reqwest;
 extern crate serde;
 
 use csv::StringRecord;
-use reqwest::Url;
+use reqwest::{Client, Url};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use std::{thread, time};
@@ -29,6 +29,16 @@ struct Project<'a> {
     repository_display_name: &'a str,
 }
 
+struct Retries {
+    retries_num: u8,
+}
+
+impl Retries {
+    fn new(retries_num: u8) -> Self {
+        Retries { retries_num }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct GithubContribution {
     total: u64,
@@ -50,29 +60,63 @@ struct GithubUser {
 
 type UniqueProjects = HashSet<String>;
 
-fn call_github<T>(http_method: HttpMethod, token: &str, url_path: &str) -> Result<T, Box<dyn Error>>
+/// Calls the Github API using the given HttpMethod and url_path. Due to the
+/// fact some endpoints like the statistics one use cached information and
+/// might return a 202 with an empty JSON as the stats are computed, we need
+/// to wait a little bit and retry, up to a certain number of times.
+fn call_github<T>(
+    http_client: &Client,
+    http_method: HttpMethod,
+    token: &str,
+    url_path: &str,
+    retries: Retries,
+) -> Result<T, Box<dyn Error>>
 where
     T: DeserializeOwned,
 {
-    let http_client = reqwest::Client::new();
-    let bearer = format!("Bearer {}", token);
-    match http_method {
-        HttpMethod::Get => {
-            let url: Url = format!("{}{}", GITHUB_BASE_URL, url_path)
-                .as_str()
-                .parse()?;
-            let res = http_client
-                .get(url)
-                .header(reqwest::header::AUTHORIZATION, bearer.as_str())
-                .send()
-                .and_then(|x| x.error_for_status())
-                .and_then(move |mut x| x.text_with_charset("utf-8"))?;
-            match serde_json::from_str(&res) {
-                Err(err) => Err(Box::new(std::io::Error::new(
-                    ErrorKind::Other,
-                    format!("{:#?}, original json: {}", err, res),
-                ))),
-                Ok(v) => Ok(v),
+    let retries_left = retries.retries_num;
+    if retries_left == 0 {
+        Err(Box::new(std::io::Error::new(
+            ErrorKind::Other,
+            "Retries finished",
+        )))
+    } else {
+        let bearer = format!("Bearer {}", token);
+        match http_method {
+            HttpMethod::Get => {
+                let url: Url = format!("{}{}", GITHUB_BASE_URL, url_path)
+                    .as_str()
+                    .parse()?;
+                let mut res = http_client
+                    .get(url)
+                    .header(reqwest::header::AUTHORIZATION, bearer.as_str())
+                    .send()?;
+                match res.status() {
+                    reqwest::StatusCode::OK => match res.json() {
+                        Err(err) => Err(Box::new(err)),
+                        Ok(r) => Ok(r),
+                    },
+                    // Github needs a bit more time to compute the stats.
+                    // We retry.
+                    reqwest::StatusCode::ACCEPTED => {
+                        println!("Retrying, only {} retries left ...", retries_left);
+                        thread::sleep(time::Duration::from_secs(1));
+                        call_github(
+                            http_client,
+                            http_method,
+                            token,
+                            url_path,
+                            Retries::new(retries_left - 1),
+                        )
+                    }
+                    err => {
+                        let body = res.text()?;
+                        Err(Box::new(std::io::Error::new(
+                            ErrorKind::Other,
+                            format!("Github returned non-200 {}, with body {}", err, body),
+                        )))
+                    }
+                }
             }
         }
     }
@@ -131,6 +175,7 @@ fn source_contributors(
         .open(format!("data/{}_contributions.csv", platform.to_lowercase()).as_str())?;
 
     let mut unique_projects = HashSet::new();
+    let http_client = reqwest::Client::new();
 
     //Write the header
     contributions.write(b"MAINTAINER,REPO,CONTRIBUTIONS,NAME\n")?;
@@ -142,6 +187,7 @@ fn source_contributors(
     {
         if let Some(project) = deserialise_project(&result) {
             extract_contribution(
+                &http_client,
                 &mut contributions,
                 &mut unique_projects,
                 project,
@@ -165,6 +211,7 @@ fn extract_github_owner_and_repo(repo_url: &str) -> Option<(&str, &str)> {
 // Extract the contribution relative to this project. For now only GitHub is
 // supported.
 fn extract_contribution(
+    http_client: &Client,
     contributions: &mut File,
     unique_projects: &mut UniqueProjects,
     project: Project,
@@ -185,9 +232,11 @@ fn extract_contribution(
                 unique_projects.insert(String::from(project.repository_url));
                 println!("Processing {}/{}", owner, name);
                 let res: Result<Vec<GithubContribution>, Box<dyn Error>> = call_github(
+                    &http_client,
                     HttpMethod::Get,
                     auth_token,
                     format!("/repos/{}/{}/stats/contributors", owner, name).as_str(),
+                    Retries::new(5),
                 );
 
                 match res {
@@ -212,8 +261,11 @@ fn extract_contribution(
                     }
                 }
 
-                //Wait 5 seconds to not overload Github and not hit the quota limit.
-                let delay = time::Duration::from_secs(5);
+                // Wait 800 ms to not overload Github and not hit the quota limit.
+                // GH allows us 5000 requests per hour. If we wait 800ms, we
+                // aim for the theoretical limit, while preserving a certain
+                // slack.
+                let delay = time::Duration::from_millis(800);
                 thread::sleep(delay);
                 Ok(())
             }
