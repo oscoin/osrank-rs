@@ -2,6 +2,10 @@ extern crate csv;
 extern crate reqwest;
 extern crate serde;
 
+extern crate failure;
+#[macro_use]
+extern crate failure_derive;
+
 use csv::StringRecord;
 use reqwest::{Client, Url};
 use serde::de::DeserializeOwned;
@@ -10,12 +14,70 @@ use std::{thread, time};
 
 use std::collections::HashSet;
 use std::env;
-use std::error::Error;
 use std::fs::{File, OpenOptions};
-use std::io::{ErrorKind, Write};
+use std::io::Write;
 
 enum HttpMethod {
     Get,
+}
+
+#[derive(Debug, Fail)]
+enum AppError {
+    // Returned when we couldn't extract an owner and a repo from the repository URL.
+    #[fail(display = "Couldn't extract project metadata for {}", repo_url)]
+    MetadataExtractionFailed { repo_url: String },
+
+    // Returned in case of generic I/O error.
+    #[fail(display = "i/o error when reading/writing on the CSV file {}", _0)]
+    IOError(std::io::Error),
+
+    // Returned when the OSRANK_GITHUB_TOKEN is not present as an env var.
+    #[fail(display = "Couldn't find OSRANK_GITHUB_TOKEN in your env vars: {}", _0)]
+    GithubTokenNotFound(std::env::VarError),
+
+    // Returned when we failed to issue the HTTP request.
+    #[fail(display = "Request to Github failed: {}", _0)]
+    GithubAPIRequestFailed(reqwest::Error),
+
+    // Returned when the Github API returned a non-2xx status code.
+    #[fail(display = "Github returned non-200 {} with body {}", _0, _1)]
+    GithubAPINotOK(reqwest::StatusCode, String),
+
+    // Returned when the parsing of the http URL to query Github failed.
+    #[fail(display = "Github URL failed parsing into a valid HTTP URL: {}", _0)]
+    GithubUrlParsingFailed(reqwest::UrlError),
+
+    // Returned when the Github API returned a non-2xx status code.
+    #[fail(display = "Couldn't deserialise the JSON returned by Github: {}", _0)]
+    DeserialisationFailure(reqwest::Error),
+
+    // Returned when the Github API returned a non-2xx status code.
+    #[fail(display = "No more retries.")]
+    NoRetriesLeft,
+}
+
+impl From<std::io::Error> for AppError {
+    fn from(err: std::io::Error) -> AppError {
+        AppError::IOError(err)
+    }
+}
+
+impl From<std::env::VarError> for AppError {
+    fn from(err: std::env::VarError) -> AppError {
+        AppError::GithubTokenNotFound(err)
+    }
+}
+
+impl From<reqwest::Error> for AppError {
+    fn from(err: reqwest::Error) -> AppError {
+        AppError::GithubAPIRequestFailed(err)
+    }
+}
+
+impl From<reqwest::UrlError> for AppError {
+    fn from(err: reqwest::UrlError) -> AppError {
+        AppError::GithubUrlParsingFailed(err)
+    }
 }
 
 // The order of the fields must be the same of the input file.
@@ -70,16 +132,13 @@ fn call_github<T>(
     token: &str,
     url_path: &str,
     retries: Retries,
-) -> Result<T, Box<dyn Error>>
+) -> Result<T, AppError>
 where
     T: DeserializeOwned,
 {
     let retries_left = retries.retries_num;
     if retries_left == 0 {
-        Err(Box::new(std::io::Error::new(
-            ErrorKind::Other,
-            "Retries finished",
-        )))
+        Err(AppError::NoRetriesLeft)
     } else {
         let bearer = format!("Bearer {}", token);
         match http_method {
@@ -92,10 +151,9 @@ where
                     .header(reqwest::header::AUTHORIZATION, bearer.as_str())
                     .send()?;
                 match res.status() {
-                    reqwest::StatusCode::OK => match res.json() {
-                        Err(err) => Err(Box::new(err)),
-                        Ok(r) => Ok(r),
-                    },
+                    reqwest::StatusCode::OK => res
+                        .json()
+                        .or_else(|e| Err(AppError::DeserialisationFailure(e))),
                     // Github needs a bit more time to compute the stats.
                     // We retry.
                     reqwest::StatusCode::ACCEPTED => {
@@ -111,10 +169,7 @@ where
                     }
                     err => {
                         let body = res.text()?;
-                        Err(Box::new(std::io::Error::new(
-                            ErrorKind::Other,
-                            format!("Github returned non-200 {}, with body {}", err, body),
-                        )))
+                        Err(AppError::GithubAPINotOK(err, body))
                     }
                 }
             }
@@ -158,11 +213,7 @@ fn deserialise_project<'a>(sr: &'a StringRecord) -> Option<Project<'a>> {
     }
 }
 
-fn source_contributors(
-    github_token: &str,
-    path: &str,
-    platform: &str,
-) -> Result<(), Box<dyn Error>> {
+fn source_contributors(github_token: &str, path: &str, platform: &str) -> Result<(), AppError> {
     let projects_file = File::open(path)?;
 
     // Build the CSV reader and iterate over each record.
@@ -199,12 +250,12 @@ fn source_contributors(
     Ok(())
 }
 
-const GITHUB_BASE_URL: &'static str = "https://api.github.com";
-
-fn extract_github_owner_and_repo(repo_url: &str) -> Option<(&str, &str)> {
+fn extract_github_owner_and_repo(repo_url: &str) -> Result<(&str, &str), AppError> {
     match repo_url.split('/').collect::<Vec<&str>>().as_slice() {
-        [_, "", "github.com", owner, repo] => Some((owner, repo)),
-        _ => None,
+        [_, "", "github.com", owner, repo] => Ok((owner, repo)),
+        _ => Err(AppError::MetadataExtractionFailed {
+            repo_url: repo_url.to_string(),
+        }),
     }
 }
 
@@ -216,22 +267,18 @@ fn extract_contribution(
     unique_projects: &mut UniqueProjects,
     project: Project,
     auth_token: &str,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), AppError> {
     // If this is an authentic project and not a fork, proceed.
     if !project.repository_fork && unique_projects.get(project.repository_url) == None {
         match extract_github_owner_and_repo(project.repository_url) {
-            None => {
-                let err = Box::new(std::io::Error::new(
-                    ErrorKind::Other,
-                    "couldn't extract project metadata",
-                ));
+            Err(err) => {
                 println!("Skipping {} due to {:#?}", &project.repository_url, err);
                 Ok(())
             }
-            Some((owner, name)) => {
+            Ok((owner, name)) => {
                 unique_projects.insert(String::from(project.repository_url));
                 println!("Processing {}/{}", owner, name);
-                let res: Result<Vec<GithubContribution>, Box<dyn Error>> = call_github(
+                let res: Result<Vec<GithubContribution>, AppError> = call_github(
                     &http_client,
                     HttpMethod::Get,
                     auth_token,
@@ -287,7 +334,9 @@ fn by_platform<'a>(platform: &'a str) -> Box<FnMut(&StringRecord) -> bool + 'a> 
     Box::new(move |e| e[1] == *platform)
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
+const GITHUB_BASE_URL: &'static str = "https://api.github.com";
+
+fn main() -> Result<(), AppError> {
     let args: Vec<String> = std::env::args().collect();
     let github_token = env::var("OSRANK_GITHUB_TOKEN")?;
 
