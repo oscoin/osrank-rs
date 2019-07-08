@@ -26,9 +26,14 @@ name = "osrank-source-contributions"
 path = "bin/source_contributions.rs"
 required-features = ["build-binary"]
 
+[[bin]]
+name = "osrank-adjacency-matrix"
+path = "bin/adjacency_matrix.rs"
+required-features = ["build-binary"]
+
 [features]
 
-build-binary = ["csv", "reqwest", "clap"]
+build-binary = ["csv", "reqwest", "clap", "ndarray", "sprs"]
 
 [dependencies]
 
@@ -45,3 +50,5 @@ either = "^1.5"
 csv = { version = "1.1", optional = true }
 reqwest = { version = "^0.9", optional = true }
 clap = { version = "^2.33", optional = true }
+ndarray = { version = "^0.12", optional = true }
+sprs = { version = "^0.6", optional = true }
