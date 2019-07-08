@@ -29,6 +29,7 @@ struct Dependency {
 }
 
 type UniqueProjects = HashSet<ProjectId>;
+type UniqueDependencies = HashSet<(ProjectId, ProjectId)>;
 
 fn source_dependencies(path: &str, platform: &str) -> Result<(), Box<dyn Error>> {
     let dependencies_file = File::open(path)?;
@@ -46,6 +47,7 @@ fn source_dependencies(path: &str, platform: &str) -> Result<(), Box<dyn Error>>
         .open(format!("data/{}_dependencies_meta.csv", platform.to_lowercase()).as_str())?;
 
     let mut unique_projects: UniqueProjects = HashSet::new();
+    let mut unique_dependencies: UniqueDependencies = HashSet::new();
 
     //Write the header(s)
     dependencies.write(b"FROM_ID,TO_ID\n")?;
@@ -57,7 +59,7 @@ fn source_dependencies(path: &str, platform: &str) -> Result<(), Box<dyn Error>>
         .filter(by_platform(platform))
     {
         let dependency: Dependency = result.deserialize(None)?;
-        extract_dependency(&mut dependencies, &dependency)?;
+        extract_dependency(&mut dependencies, &dependency, &mut unique_dependencies)?;
         extract_metadata(
             &mut unique_projects,
             platform,
@@ -72,11 +74,15 @@ fn source_dependencies(path: &str, platform: &str) -> Result<(), Box<dyn Error>>
 fn extract_dependency(
     dependencies: &mut File,
     dependency: &Dependency,
+    unique_dependencies: &mut UniqueDependencies,
 ) -> Result<(), Box<dyn Error>> {
     match dependency.dependency_project_id {
         None => (),
         Some(pid) => {
-            dependencies.write(format!("{},{}\n", dependency.project_id, pid).as_bytes())?;
+            if let None = unique_dependencies.get(&(dependency.project_id, pid)) {
+                unique_dependencies.insert((dependency.project_id, pid));
+                dependencies.write(format!("{},{}\n", dependency.project_id, pid).as_bytes())?;
+            }
         }
     }
 

@@ -4,3 +4,4 @@ tags
 *.dot
 *.png
 data/*.csv
+!data/cargo_contributions.csv

@@ -185,6 +185,8 @@ fn deserialise_project<'a>(sr: &'a StringRecord) -> Option<Project<'a>> {
         let project_name = sr.get(2);
         let repository_url = sr.get(9);
         let repository_fork = sr.get(24).and_then(|s: &str| match s {
+            "0" => Some(false),
+            "1" => Some(true),
             "t" => Some(true),
             "f" => Some(false),
             "true" => Some(true),
@@ -289,15 +291,15 @@ fn extract_contribution(
     auth_token: &str,
 ) -> Result<(), AppError> {
     // If this is an authentic project and not a fork, proceed.
-    if !project.repository_fork && unique_projects.get(project.repository_url) == None {
+    if !project.repository_fork && unique_projects.get(project.project_name) == None {
         match extract_github_owner_and_repo(project.repository_url) {
             Err(err) => {
                 println!("Skipping {} due to {:#?}", &project.repository_url, err);
                 Ok(())
             }
             Ok((owner, name)) => {
-                unique_projects.insert(String::from(project.repository_url));
-                println!("Processing {}/{}", owner, name);
+                unique_projects.insert(String::from(project.project_name));
+                println!("Processing {} ({}/{})", project.project_name, owner, name);
                 let res: Result<Vec<GithubContribution>, AppError> = call_github(
                     &http_client,
                     HttpMethod::Get,
@@ -311,8 +313,9 @@ fn extract_contribution(
                         println!("Skipping {} due to {:#?}", &project.repository_url, err);
                     }
                     Ok(stats) => {
+                        let stats_len = stats.len();
                         for contribution in stats {
-                            if is_maintainer(&owner, &contribution) {
+                            if is_maintainer(&owner, &contribution, stats_len) {
                                 contributions.write(
                                     format!(
                                         "github@{},{},{},{}\n",
@@ -346,8 +349,12 @@ fn extract_contribution(
 // for a project a user that has been contributed for more
 // than 6 months. Furthermore, it needs to have a somewhat steady contribution
 // history.
-fn is_maintainer(owner: &str, stat: &GithubContribution) -> bool {
-    stat.author.login == owner || { stat.total > 50 }
+fn is_maintainer(owner: &str, stat: &GithubContribution, stats_len: usize) -> bool {
+    // Users are considered a contributor if one of the following occur:
+    // 1. The owner of the repo is equal to their username;
+    // 2. They have at least 50 contributions
+    // 3. They are the only contributor to the repo.
+    stat.author.login == owner || { stat.total > 50 } || stats_len as u32 == 1
 }
 
 fn by_platform<'a>(platform: &'a str) -> Box<FnMut(&StringRecord) -> bool + 'a> {
@@ -408,4 +415,27 @@ fn main() -> Result<(), AppError> {
             .expect("platform parameter wasn't given."),
         matches.value_of("resume-from"),
     )
+}
+
+#[test]
+fn test_rncryptor_deserialise() {
+    let input:String = String::from(r###"
+2084361,Cargo,rncryptor,2016-12-23 09:57:46 UTC,2018-01-03 08:59:05 UTC,Rust implementation of the RNCryptor AES file format,"",http://rncryptor.github.io/,MIT,https://github.com/RNCryptor/rncryptor-rs,1,0,2016-12-23 09:57:29 UTC,0.1.0,,0,Rust,,2018-01-03 08:59:02 UTC,0,17362897,GitHub,RNCryptor/rncryptor-rs,Pure Rust implementation of the RNCryptor cryptographic format by Rob Napier,false,2016-12-18 17:37:39 UTC,2016-12-30 02:04:24 UTC,2016-12-26 17:33:32 UTC,,58,4,Rust,true,true,false,0,,1,master,0,76797122,,MIT,0,"","","","","","","",,2016-12-18 17:38:00 UTC,2,GitHub,,git,,,""
+"###);
+
+    let mut rdr = csv::ReaderBuilder::new()
+        .flexible(true)
+        .from_reader(input.as_bytes());
+
+    for result in rdr.records() {
+        let r = result.expect("impossible");
+        assert_eq!(deserialise_project(&r).is_some(), true)
+    }
+}
+
+#[test]
+fn skip_while_ok() {
+    let a = [1, -1i32, 0, 1];
+    let mut iter = a.into_iter().skip_while(|x| x.is_negative());
+    assert_eq!(iter.next(), Some(&1));
 }
