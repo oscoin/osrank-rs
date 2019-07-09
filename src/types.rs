@@ -102,18 +102,12 @@ impl fmt::Display for Artifact {
 }
 
 /// The network graph from the paper, comprising of both accounts and projects.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Network {
     pub from_graph: Graph<Artifact, Dependency, Directed>,
 }
 
 impl Network {
-    pub fn new() -> Self {
-        Network {
-            from_graph: Graph::new(),
-        }
-    }
-
     /// Adds an Artifact to the Network.
     pub fn add_artifact(&mut self, artifact: Artifact) {
         let _ = self.from_graph.add_node(artifact);

@@ -1,6 +1,7 @@
 extern crate clap;
 extern crate failure;
 extern crate ndarray;
+extern crate num_traits;
 extern crate serde;
 extern crate sprs;
 
@@ -9,6 +10,7 @@ use failure::Fail;
 use serde::Deserialize;
 use sprs::{CsMat, TriMat, TriMatBase};
 
+use num_traits::Num;
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -47,6 +49,7 @@ type Contributor = String;
 // for matrix manipulation, so we define this LocalMatrixIndex exactly for
 // this purpose.
 type LocalMatrixIndex = u64;
+type SparseMatrix = CsMat<f32>;
 
 #[derive(Debug, Deserialize)]
 struct DepMetaRow {
@@ -103,25 +106,41 @@ struct DepRow {
 // Functions
 //
 
+/// Normalises the rows for the input matrix.
+fn normalise_rows<N>(matrix: &mut CsMat<N>)
+where
+    N: Num + Copy,
+{
+    for mut row_vec in matrix.outer_iterator_mut() {
+        let mut ixs = Vec::new();
+        let norm = row_vec.iter().fold(N::zero(), |acc, v| {
+            ixs.push(v.0);
+            acc + *(v.1)
+        });
+        if norm != N::zero() {
+            for ix in ixs {
+                row_vec[ix] = row_vec[ix] / norm;
+            }
+        }
+    }
+}
+
 /// Creates a (sparse) adjacency matrix for the dependencies.
 /// Corresponds to the "cargo-dep-adj.csv" from the Python scripts.
 fn new_dependency_adjacency_matrix(
     deps_meta: &DependenciesMetadata,
     deps_csv: csv::Reader<File>,
-) -> Result<CsMat<u8>, AppError> {
-    let mut dep_adj: TriMat<u8> = TriMatBase::new((deps_meta.ids.len(), deps_meta.ids.len()));
+) -> Result<SparseMatrix, AppError> {
+    let mut dep_adj: TriMat<f32> = TriMatBase::new((deps_meta.ids.len(), deps_meta.ids.len()));
 
     // Iterate through the dependencies, populating the matrix.
     for result in deps_csv.into_records().filter_map(|e| e.ok()) {
         let row: DepRow = result.deserialize(None)?;
-        match (
+        if let (Some(from_index), Some(to_index)) = (
             deps_meta.project2index.get(&row.from),
             deps_meta.project2index.get(&row.to),
         ) {
-            (Some(from_index), Some(to_index)) => {
-                dep_adj.add_triplet(*from_index as usize, *to_index as usize, 1);
-            }
-            _ => (),
+            dep_adj.add_triplet(*from_index as usize, *to_index as usize, 1.0);
         }
     }
 
@@ -130,11 +149,29 @@ fn new_dependency_adjacency_matrix(
 
 /// Creates a (sparse) adjacency matrix for the contributions.
 /// Corresponds to the "cargo-contrib-adj.csv" from the Python scripts.
-fn new_contribution_adjacency_matrix() -> Result<CsMat<u8>, AppError> {
+fn new_contribution_adjacency_matrix(
+    contribs_meta: &ContributionsMetadata,
+) -> Result<SparseMatrix, AppError> {
+    // // Creates a sparse matrix of projects x contributors
+    // let mut dep_adj: TriMat<u8> = TriMatBase::new((contribs_meta.contributors.len(), deps_meta.ids.len()));
+
+    // // Iterate through the dependencies, populating the matrix.
+    // for result in deps_csv.into_records().filter_map(|e| e.ok()) {
+    //     let row: DepRow = result.deserialize(None)?;
+    //     if let (Some(from_index), Some(to_index)) = (
+    //         deps_meta.project2index.get(&row.from),
+    //         deps_meta.project2index.get(&row.to),
+    //     ) {
+    //         dep_adj.add_triplet(*from_index as usize, *to_index as usize, 1);
+    //     }
+    // }
+
+    // Ok(dep_adj.to_csr())
+
     unimplemented!()
 }
 
-fn debug_sparse_matrix_to_csv(matrix: &CsMat<u8>, out_path: &str) -> Result<(), AppError> {
+fn debug_sparse_matrix_to_csv(matrix: &SparseMatrix, out_path: &str) -> Result<(), AppError> {
     let mut output_csv = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -143,11 +180,11 @@ fn debug_sparse_matrix_to_csv(matrix: &CsMat<u8>, out_path: &str) -> Result<(), 
     for row in matrix.to_dense().genrows() {
         if let Some((last, els)) = row.as_slice().and_then(|e| e.split_last()) {
             for cell in els {
-                output_csv.write(format!("{},", *cell).as_str().as_bytes())?;
+                output_csv.write_all(format!("{},", *cell).as_str().as_bytes())?;
             }
-            output_csv.write(format!("{}", *last).as_str().as_bytes())?;
+            output_csv.write_all(format!("{}", *last).as_str().as_bytes())?;
         }
-        output_csv.write(b"\n")?;
+        output_csv.write_all(b"\n")?;
     }
 
     Ok(())
@@ -252,7 +289,26 @@ fn main() -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use ndarray::arr2;
-    use sprs::{TriMat, TriMatBase};
+    use sprs::{CsMat, TriMat, TriMatBase};
+
+    #[test]
+    // Check that this implementation is the same as the Python script
+    fn normalise_rows_equal_python() {
+        let mut input = CsMat::csr_from_dense(
+            arr2(&[[10., 20., 30.], [7., 8., 9.], [5., 9., 4.]]).view(),
+            0.0,
+        );
+
+        super::normalise_rows(&mut input);
+
+        let expected = arr2(&[
+            [0.16666666666666666, 0.3333333333333333, 0.5],
+            [0.2916666666666667, 0.3333333333333333, 0.375],
+            [0.2777777777777778, 0.5, 0.2222222222222222],
+        ]);
+
+        assert_eq!(input.to_dense(), expected);
+    }
 
     #[test]
     // See: https://en.wikipedia.org/wiki/Sparse_matrix#Compressed_sparse_row_.28CSR.2C_CRS_or_Yale_format.29
