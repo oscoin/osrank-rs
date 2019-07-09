@@ -1,10 +1,13 @@
 extern crate fraction;
+extern crate num_traits;
 extern crate petgraph;
 
 use std::collections::HashSet;
 use std::fmt;
+use std::ops::{Div, Mul, Rem};
 
 use fraction::{Fraction, GenericFraction};
+use num_traits::{Num, One, Zero};
 use petgraph::graph::NodeIndex;
 use petgraph::{Directed, Graph};
 
@@ -18,7 +21,7 @@ pub struct RandomWalk {
     random_walk_internal: Vec<NodeIndex>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Add, Sub)]
 pub struct Weight {
     get_weight: GenericFraction<u32>,
 }
@@ -28,6 +31,68 @@ impl Weight {
         Weight {
             get_weight: GenericFraction::new(numerator, denominator),
         }
+    }
+
+    pub fn as_f64(self) -> Option<f64> {
+        match (self.get_weight.numer(), self.get_weight.denom()) {
+            (Some(n), Some(d)) => Some(*n as f64 / *d as f64),
+            _ => None,
+        }
+    }
+}
+
+impl Mul for Weight {
+    type Output = Weight;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        Weight {
+            get_weight: self.get_weight * rhs.get_weight,
+        }
+    }
+}
+
+impl Div for Weight {
+    type Output = Weight;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        Weight {
+            get_weight: self.get_weight / rhs.get_weight,
+        }
+    }
+}
+
+impl Rem for Weight {
+    type Output = Weight;
+
+    fn rem(self, rhs: Self) -> Self::Output {
+        Weight {
+            get_weight: self.get_weight % rhs.get_weight,
+        }
+    }
+}
+
+impl Num for Weight {
+    type FromStrRadixErr = fraction::ParseRatioError;
+
+    fn from_str_radix(str: &str, radix: u32) -> Result<Self, Self::FromStrRadixErr> {
+        let inner = Num::from_str_radix(str, radix)?;
+        Ok(Weight { get_weight: inner })
+    }
+}
+
+impl One for Weight {
+    fn one() -> Self {
+        Weight::new(1, 1)
+    }
+}
+
+impl Zero for Weight {
+    fn zero() -> Self {
+        Weight::new(0, 1)
+    }
+
+    fn is_zero(&self) -> bool {
+        self.get_weight.numer() == Some(&0)
     }
 }
 

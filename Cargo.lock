@@ -267,6 +267,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive_more"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "proc-macro2 0.4.30 (registry+https://github.com/rust-lang/crates.io-index)",
+ "quote 0.6.12 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rustc_version 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "syn 0.15.39 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "dtoa"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -832,6 +843,7 @@ version = "0.1.0"
 dependencies = [
  "clap 2.33.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "csv 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "derive_more 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "either 1.5.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "failure 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "failure_derive 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1720,6 +1732,7 @@ dependencies = [
 "checksum crossbeam-utils 0.6.5 (registry+https://github.com/rust-lang/crates.io-index)" = "f8306fcef4a7b563b76b7dd949ca48f52bc1141aa067d2ea09565f3e2652aa5c"
 "checksum csv 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "37519ccdfd73a75821cac9319d4fce15a81b9fcf75f951df5b9988aa3a0af87d"
 "checksum csv-core 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)" = "9b5cadb6b25c77aeff80ba701712494213f4a8418fcda2ee11b6560c3ad0bf4c"
+"checksum derive_more 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)" = "3f57d78cf3bd45270dad4e70c21ec77a960b36c7a841ff9db76aaa775a8fb871"
 "checksum dtoa 0.4.4 (registry+https://github.com/rust-lang/crates.io-index)" = "ea57b42383d091c85abcc2706240b94ab2a8fa1fc81c10ff23c4de06e2a90b5e"
 "checksum either 1.5.2 (registry+https://github.com/rust-lang/crates.io-index)" = "5527cfe0d098f36e3f8839852688e63c8fff1c90b2b405aef730615f9a7bcf7b"
 "checksum encoding_rs 0.8.17 (registry+https://github.com/rust-lang/crates.io-index)" = "4155785c79f2f6701f185eb2e6b4caf0555ec03477cb4c70db67b465311620ed"
