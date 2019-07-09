@@ -2,15 +2,17 @@ extern crate clap;
 extern crate failure;
 extern crate ndarray;
 extern crate num_traits;
+extern crate osrank;
 extern crate serde;
 extern crate sprs;
 
 use clap::{App, Arg};
 use failure::Fail;
+use osrank::types::{HyperParams, Weight};
 use serde::Deserialize;
 use sprs::{CsMat, TriMat, TriMatBase};
 
-use num_traits::Num;
+use num_traits::{Num, One};
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -49,7 +51,10 @@ type Contributor = String;
 // for matrix manipulation, so we define this LocalMatrixIndex exactly for
 // this purpose.
 type LocalMatrixIndex = u64;
-type SparseMatrix = CsMat<f32>;
+type SparseMatrix = CsMat<osrank::types::Weight>;
+type DependencyMatrix = SparseMatrix;
+type ContributionMatrix = SparseMatrix;
+type MaintenanceMatrix = SparseMatrix;
 
 #[derive(Debug, Deserialize)]
 struct DepMetaRow {
@@ -130,8 +135,8 @@ where
 fn new_dependency_adjacency_matrix(
     deps_meta: &DependenciesMetadata,
     deps_csv: csv::Reader<File>,
-) -> Result<SparseMatrix, AppError> {
-    let mut dep_adj: TriMat<f32> = TriMatBase::new((deps_meta.ids.len(), deps_meta.ids.len()));
+) -> Result<DependencyMatrix, AppError> {
+    let mut dep_adj: TriMat<Weight> = TriMatBase::new((deps_meta.ids.len(), deps_meta.ids.len()));
 
     // Iterate through the dependencies, populating the matrix.
     for result in deps_csv.into_records().filter_map(|e| e.ok()) {
@@ -140,7 +145,7 @@ fn new_dependency_adjacency_matrix(
             deps_meta.project2index.get(&row.from),
             deps_meta.project2index.get(&row.to),
         ) {
-            dep_adj.add_triplet(*from_index as usize, *to_index as usize, 1.0);
+            dep_adj.add_triplet(*from_index as usize, *to_index as usize, One::one());
         }
     }
 
@@ -151,7 +156,8 @@ fn new_dependency_adjacency_matrix(
 /// Corresponds to the "cargo-contrib-adj.csv" from the Python scripts.
 fn new_contribution_adjacency_matrix(
     contribs_meta: &ContributionsMetadata,
-) -> Result<SparseMatrix, AppError> {
+    contribs_csv: csv::Reader<File>,
+) -> Result<ContributionMatrix, AppError> {
     // // Creates a sparse matrix of projects x contributors
     // let mut dep_adj: TriMat<u8> = TriMatBase::new((contribs_meta.contributors.len(), deps_meta.ids.len()));
 
@@ -171,6 +177,24 @@ fn new_contribution_adjacency_matrix(
     unimplemented!()
 }
 
+fn new_network_matrix(
+    dep_matrix: &mut DependencyMatrix,
+    contrib_matrix: &mut ContributionMatrix,
+    maintainer_matrix: &mut MaintenanceMatrix,
+    hyperparams: HyperParams,
+) -> Result<SparseMatrix, AppError> {
+    normalise_rows(dep_matrix);
+    normalise_rows(contrib_matrix);
+
+    let project_to_project = unimplemented!(); // hyperparams.depend_factor * dep_matrix;
+    let project_to_account = unimplemented!(); // hyperparams.contrib_factor * contrib_matrix;
+    let account_to_project = unimplemented!();
+    let account_to_account: SparseMatrix =
+        CsMat::zero((contrib_matrix.cols(), contrib_matrix.cols()));
+
+    unimplemented!()
+}
+
 fn debug_sparse_matrix_to_csv(matrix: &SparseMatrix, out_path: &str) -> Result<(), AppError> {
     let mut output_csv = OpenOptions::new()
         .write(true)
@@ -180,9 +204,13 @@ fn debug_sparse_matrix_to_csv(matrix: &SparseMatrix, out_path: &str) -> Result<(
     for row in matrix.to_dense().genrows() {
         if let Some((last, els)) = row.as_slice().and_then(|e| e.split_last()) {
             for cell in els {
-                output_csv.write_all(format!("{},", *cell).as_str().as_bytes())?;
+                output_csv.write_all(
+                    format!("{},", (*cell).as_f64().unwrap())
+                        .as_str()
+                        .as_bytes(),
+                )?;
             }
-            output_csv.write_all(format!("{}", *last).as_str().as_bytes())?;
+            output_csv.write_all(format!("{}", (*last).as_f64().unwrap()).as_str().as_bytes())?;
         }
         output_csv.write_all(b"\n")?;
     }
@@ -199,7 +227,7 @@ fn build_adjacency_matrix(
 ) -> Result<(), AppError> {
     let deps_csv = csv::Reader::from_reader(File::open(deps_file)?);
     let deps_meta_csv = csv::Reader::from_reader(File::open(deps_meta_file)?);
-    let contribs_csv = csv::Reader::from_reader(File::open(contrib_file)?);
+    let mut contribs_csv = csv::Reader::from_reader(File::open(contrib_file)?);
 
     let mut deps_meta = DependenciesMetadata::new();
     let mut contribs_meta = ContributionsMetadata::new();
@@ -218,7 +246,7 @@ fn build_adjacency_matrix(
 
     // Iterate once over the contributions and build a matrix where
     // rows are the project names and columns the (unique) contributors.
-    for result in contribs_csv.into_records().filter_map(|e| e.ok()) {
+    for result in contribs_csv.records().filter_map(|e| e.ok()) {
         let row: ContribRow = result.deserialize(None)?;
         let c = row.contributor.clone();
         contribs_meta.contributors.insert(row.contributor);
@@ -227,13 +255,21 @@ fn build_adjacency_matrix(
             .insert(c, contribs_meta.contributors.len() as u64 - 1);
     }
 
-    // Create the dependency matrix (data/cargo-dep-adj.csv in the original
-    // script)
-    let dep_adj_matrix = new_dependency_adjacency_matrix(&deps_meta, deps_csv)?;
-    // let con_adj_matrix = new_contribution_adjacency_matrix()?;
+    //TODO(adn) For now the maintenance matrix is empty.
+
+    let mut dep_adj_matrix = new_dependency_adjacency_matrix(&deps_meta, deps_csv)?;
+    let mut con_adj_matrix = new_contribution_adjacency_matrix(&contribs_meta, contribs_csv)?;
+    let mut maintenance_matrix = CsMat::zero((con_adj_matrix.cols(), con_adj_matrix.cols()));
+
+    let network_matrix = new_network_matrix(
+        &mut dep_adj_matrix,
+        &mut con_adj_matrix,
+        &mut maintenance_matrix,
+        HyperParams::default(),
+    )?;
 
     // Just for fun/debug: write this as a CSV file.
-    debug_sparse_matrix_to_csv(&dep_adj_matrix, "data/cargo-dep-adj.csv")?;
+    debug_sparse_matrix_to_csv(&network_matrix, "data/cargo-all-adj.csv")?;
 
     Ok(())
 }
