@@ -33,7 +33,7 @@ required-features = ["build-binary"]
 
 [features]
 
-build-binary = ["csv", "reqwest", "clap", "ndarray", "sprs"]
+build-binary = ["csv", "reqwest", "clap", "ndarray", "sprs", "num-traits"]
 
 [dependencies]
 
@@ -52,3 +52,4 @@ reqwest = { version = "^0.9", optional = true }
 clap = { version = "^2.33", optional = true }
 ndarray = { version = "^0.12", optional = true }
 sprs = { version = "^0.6", optional = true }
+num-traits = { version = "^0.2", optional = true }

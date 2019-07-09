@@ -34,7 +34,7 @@ pub fn osrank_naive(seed_set: SeedSet, network: &mut Network) -> Result<(), Osra
     // Phase1, rank the network and produce a NetworkView.
     let mut phase1 = random_walk(Some(seed_set), &NetworkView::from_network(network))?;
     // Phase2, compute the osrank only on the NetworkView
-    let mut phase2 = random_walk(None, &mut phase1.network_view)?;
+    let mut phase2 = random_walk(None, &phase1.network_view)?;
     rank_network(&phase2.walks, &mut phase2.network_view)
 }
 
