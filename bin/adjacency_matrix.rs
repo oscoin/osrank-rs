@@ -10,7 +10,8 @@ use clap::{App, Arg};
 use failure::Fail;
 use osrank::types::{HyperParams, Weight};
 use serde::Deserialize;
-use sprs::{CsMat, TriMat, TriMatBase};
+use sprs::binop::scalar_mul_mat;
+use sprs::{hstack, vstack, CsMat, CsMatView, TriMat, TriMatBase};
 
 use num_traits::{Num, One};
 use std::collections::{HashMap, HashSet};
@@ -112,7 +113,7 @@ struct DepRow {
 //
 
 /// Normalises the rows for the input matrix.
-fn normalise_rows<N>(matrix: &mut CsMat<N>)
+fn normalise_rows_mut<N>(matrix: &mut CsMat<N>)
 where
     N: Num + Copy,
 {
@@ -128,6 +129,13 @@ where
             }
         }
     }
+}
+
+fn normalise_rows<'a, N>(matrix: &'a CsMat<N>) -> CsMatView<'a, N>
+where
+    N: Num + Copy,
+{
+    unimplemented!()
 }
 
 /// Creates a (sparse) adjacency matrix for the dependencies.
@@ -178,21 +186,33 @@ fn new_contribution_adjacency_matrix(
 }
 
 fn new_network_matrix(
-    dep_matrix: &mut DependencyMatrix,
-    contrib_matrix: &mut ContributionMatrix,
-    maintainer_matrix: &mut MaintenanceMatrix,
+    dep_matrix: &DependencyMatrix,
+    contrib_matrix: &ContributionMatrix,
+    maintainer_matrix: &MaintenanceMatrix,
     hyperparams: HyperParams,
 ) -> Result<SparseMatrix, AppError> {
-    normalise_rows(dep_matrix);
-    normalise_rows(contrib_matrix);
+    let contrib_t = contrib_matrix.clone().transpose_into();
+    let contrib_t_norm = normalise_rows(&contrib_t);
+    let maintainer_t = maintainer_matrix.clone().transpose_into();
+    let maintainer_norm = normalise_rows(&maintainer_matrix);
 
-    let project_to_project = unimplemented!(); // hyperparams.depend_factor * dep_matrix;
-    let project_to_account = unimplemented!(); // hyperparams.contrib_factor * contrib_matrix;
-    let account_to_project = unimplemented!();
+    let project_to_project =
+        scalar_mul_mat(&normalise_rows(&dep_matrix), hyperparams.depend_factor);
+    let project_to_account = &scalar_mul_mat(&maintainer_norm, hyperparams.maintain_factor)
+        + &scalar_mul_mat(&normalise_rows(&contrib_matrix), hyperparams.contrib_factor);
+    let account_to_project = &scalar_mul_mat(
+        &(&maintainer_t * &contrib_t_norm),
+        hyperparams.maintain_prime_factor,
+    ) + &scalar_mul_mat(&contrib_t_norm, hyperparams.contrib_prime_factor);
+
     let account_to_account: SparseMatrix =
         CsMat::zero((contrib_matrix.cols(), contrib_matrix.cols()));
 
-    unimplemented!()
+    // Join the matrixes together
+    let q1_q2 = hstack(&vec![project_to_project.view(), project_to_account.view()]);
+    let q3_q4 = hstack(&vec![account_to_project.view(), account_to_account.view()]);
+
+    Ok(vstack(&vec![q1_q2.view(), q3_q4.view()]))
 }
 
 fn debug_sparse_matrix_to_csv(matrix: &SparseMatrix, out_path: &str) -> Result<(), AppError> {
@@ -335,7 +355,7 @@ mod tests {
             0.0,
         );
 
-        super::normalise_rows(&mut input);
+        super::normalise_rows_mut(&mut input);
 
         let expected = arr2(&[
             [0.16666666666666666, 0.3333333333333333, 0.5],

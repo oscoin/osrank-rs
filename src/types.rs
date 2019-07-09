@@ -41,6 +41,12 @@ impl Weight {
     }
 }
 
+impl Default for Weight {
+    fn default() -> Self {
+        One::one()
+    }
+}
+
 impl Mul for Weight {
     type Output = Weight;
 
@@ -98,11 +104,11 @@ impl Zero for Weight {
 
 /// The hyperparams from the paper, which are used to weight the edges.
 pub struct HyperParams {
-    contrib_factor: Weight,
-    contrib_prime_factor: Weight,
-    depend_factor: Weight,
-    maintain_factor: Weight,
-    maintain_prime_factor: Weight,
+    pub contrib_factor: Weight,
+    pub contrib_prime_factor: Weight,
+    pub depend_factor: Weight,
+    pub maintain_factor: Weight,
+    pub maintain_prime_factor: Weight,
 }
 
 /// A default implementation based on the values from the paper.
