@@ -241,7 +241,7 @@ fn source_contributors(
 
     //Write the header (if we are not resuming)
     if resume_from.is_none() {
-        contributions.write(b"MAINTAINER,REPO,CONTRIBUTIONS,NAME\n")?;
+        contributions.write(b"ID,MAINTAINER,REPO,CONTRIBUTIONS,NAME\n")?;
     }
 
     for result in rdr
@@ -318,7 +318,8 @@ fn extract_contribution(
                             if is_maintainer(&owner, &contribution, stats_len) {
                                 contributions.write(
                                     format!(
-                                        "github@{},{},{},{}\n",
+                                        "{},github@{},{},{},{}\n",
+                                        project.id,
                                         contribution.author.login,
                                         project.repository_url,
                                         contribution.total,

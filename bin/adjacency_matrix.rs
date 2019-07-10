@@ -331,7 +331,6 @@ fn build_adjacency_matrix(
     }
 
     //TODO(adn) For now the maintenance matrix is empty.
-
     let dep_adj_matrix = new_dependency_adjacency_matrix(&deps_meta, deps_csv)?;
     let con_adj_matrix =
         new_contribution_adjacency_matrix(&deps_meta, &contribs_meta, contribs_csv)?;
