@@ -11,9 +11,9 @@ use failure::Fail;
 use osrank::types::{HyperParams, Weight};
 use serde::Deserialize;
 use sprs::binop::scalar_mul_mat;
-use sprs::{hstack, vstack, CsMat, CsMatView, TriMat, TriMatBase};
+use sprs::{hstack, vstack, CsMat, TriMat, TriMatBase};
 
-use num_traits::{Num, One};
+use num_traits::{Num, One, Signed, Zero};
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -131,11 +131,37 @@ where
     }
 }
 
-fn normalise_rows<'a, N>(matrix: &'a CsMat<N>) -> CsMatView<'a, N>
+/// Normalises the rows of a Matrix.
+/// N.B. It returns a brand new Matrix, therefore it performs a copy.
+/// FIXME(adn) Is there a way to yield only a (partial) view copying only
+/// the values?
+fn normalise_rows<N>(matrix: &CsMat<N>) -> CsMat<N>
 where
     N: Num + Copy,
 {
-    unimplemented!()
+    let mut cloned = matrix.clone();
+    normalise_rows_mut(&mut cloned);
+    cloned
+}
+
+//FIXME(adn) Inefficient version that convert to dense, normalise, and
+//finally reconverts back.
+fn normalise_rows_naive<N>(matrix: &CsMat<N>) -> CsMat<N>
+where
+    N: Num + Copy + Signed + PartialOrd,
+{
+    let mut dense = matrix.to_dense();
+
+    for mut row_vec in dense.outer_iter_mut() {
+        let norm = row_vec.iter().fold(N::zero(), |acc, v| acc + *v);
+        if norm != N::zero() {
+            for ix in 0..row_vec.len() {
+                row_vec[ix] = row_vec[ix] / norm;
+            }
+        }
+    }
+
+    CsMat::csr_from_dense(dense.view(), N::zero())
 }
 
 /// Creates a (sparse) adjacency matrix for the dependencies.
@@ -162,12 +188,21 @@ fn new_dependency_adjacency_matrix(
 
 /// Creates a (sparse) adjacency matrix for the contributions.
 /// Corresponds to the "cargo-contrib-adj.csv" from the Python scripts.
+/// NOTE(adn) We need to cleanup this matrix to make sure we end up with
+/// a matrix such that:
+/// 1. The number of rows and columns is equal to the dependency matrix
+/// 2. The data occurs in the same logical order of the dependency matrix.
+///    To say this differently, if the dependency matrix lists A,B,C as its
+///    first projects, the contribution matrix will need to list A,B,C in
+///    exactly the same order, without gaps.
 fn new_contribution_adjacency_matrix(
+    deps_meta: &DependenciesMetadata,
     contribs_meta: &ContributionsMetadata,
     contribs_csv: csv::Reader<File>,
 ) -> Result<ContributionMatrix, AppError> {
     // // Creates a sparse matrix of projects x contributors
-    // let mut dep_adj: TriMat<u8> = TriMatBase::new((contribs_meta.contributors.len(), deps_meta.ids.len()));
+    // let mut contrib_adj: TriMat<osrank::types::Weight> =
+    //     TriMatBase::new((deps_meta.ids.len(), contribs_meta.contributors.len()));
 
     // // Iterate through the dependencies, populating the matrix.
     // for result in deps_csv.into_records().filter_map(|e| e.ok()) {
@@ -185,6 +220,27 @@ fn new_contribution_adjacency_matrix(
     unimplemented!()
 }
 
+pub trait HadamardMul {
+    type Input;
+    fn hadamard_mul(self, rhs: &Self::Input) -> Self::Input;
+}
+
+impl HadamardMul for SparseMatrix {
+    type Input = SparseMatrix;
+
+    //FIXME(adn) Inefficient version that converts into dense first.
+    fn hadamard_mul(self: Self, rhs: &SparseMatrix) -> SparseMatrix {
+        CsMat::csr_from_dense((self.to_dense() * rhs.to_dense()).view(), Zero::zero())
+    }
+}
+
+impl HadamardMul for CsMat<i32> {
+    type Input = CsMat<i32>;
+    fn hadamard_mul(self: Self, rhs: &Self) -> Self {
+        CsMat::csr_from_dense((self.to_dense() * rhs.to_dense()).view(), Zero::zero())
+    }
+}
+
 fn new_network_matrix(
     dep_matrix: &DependencyMatrix,
     contrib_matrix: &ContributionMatrix,
@@ -192,7 +248,7 @@ fn new_network_matrix(
     hyperparams: HyperParams,
 ) -> Result<SparseMatrix, AppError> {
     let contrib_t = contrib_matrix.clone().transpose_into();
-    let contrib_t_norm = normalise_rows(&contrib_t);
+    let contrib_t_norm = normalise_rows_naive(&contrib_t);
     let maintainer_t = maintainer_matrix.clone().transpose_into();
     let maintainer_norm = normalise_rows(&maintainer_matrix);
 
@@ -200,10 +256,9 @@ fn new_network_matrix(
         scalar_mul_mat(&normalise_rows(&dep_matrix), hyperparams.depend_factor);
     let project_to_account = &scalar_mul_mat(&maintainer_norm, hyperparams.maintain_factor)
         + &scalar_mul_mat(&normalise_rows(&contrib_matrix), hyperparams.contrib_factor);
-    let account_to_project = &scalar_mul_mat(
-        &(&maintainer_t * &contrib_t_norm),
-        hyperparams.maintain_prime_factor,
-    ) + &scalar_mul_mat(&contrib_t_norm, hyperparams.contrib_prime_factor);
+    let account_to_project = &scalar_mul_mat(&maintainer_t, hyperparams.maintain_prime_factor)
+        .hadamard_mul(&contrib_t_norm)
+        + &scalar_mul_mat(&contrib_t_norm, hyperparams.contrib_prime_factor);
 
     let account_to_account: SparseMatrix =
         CsMat::zero((contrib_matrix.cols(), contrib_matrix.cols()));
@@ -212,7 +267,7 @@ fn new_network_matrix(
     let q1_q2 = hstack(&vec![project_to_project.view(), project_to_account.view()]);
     let q3_q4 = hstack(&vec![account_to_project.view(), account_to_account.view()]);
 
-    Ok(vstack(&vec![q1_q2.view(), q3_q4.view()]))
+    Ok(normalise_rows(&vstack(&vec![q1_q2.view(), q3_q4.view()])))
 }
 
 fn debug_sparse_matrix_to_csv(matrix: &SparseMatrix, out_path: &str) -> Result<(), AppError> {
@@ -277,14 +332,15 @@ fn build_adjacency_matrix(
 
     //TODO(adn) For now the maintenance matrix is empty.
 
-    let mut dep_adj_matrix = new_dependency_adjacency_matrix(&deps_meta, deps_csv)?;
-    let mut con_adj_matrix = new_contribution_adjacency_matrix(&contribs_meta, contribs_csv)?;
-    let mut maintenance_matrix = CsMat::zero((con_adj_matrix.cols(), con_adj_matrix.cols()));
+    let dep_adj_matrix = new_dependency_adjacency_matrix(&deps_meta, deps_csv)?;
+    let con_adj_matrix =
+        new_contribution_adjacency_matrix(&deps_meta, &contribs_meta, contribs_csv)?;
+    let maintenance_matrix = CsMat::zero((con_adj_matrix.cols(), con_adj_matrix.cols()));
 
     let network_matrix = new_network_matrix(
-        &mut dep_adj_matrix,
-        &mut con_adj_matrix,
-        &mut maintenance_matrix,
+        &dep_adj_matrix,
+        &con_adj_matrix,
+        &maintenance_matrix,
         HyperParams::default(),
     )?;
 
@@ -344,7 +400,11 @@ fn main() -> Result<(), AppError> {
 
 #[cfg(test)]
 mod tests {
+    use crate::HadamardMul;
     use ndarray::arr2;
+    use num_traits::{One, Zero};
+    use osrank::types::{HyperParams, Weight};
+    use pretty_assertions::assert_eq;
     use sprs::{CsMat, TriMat, TriMatBase};
 
     #[test]
@@ -364,6 +424,133 @@ mod tests {
         ]);
 
         assert_eq!(input.to_dense(), expected);
+    }
+
+    #[test]
+    // Check that this implementation is the same as the Python script
+    fn hadamard_mul_works() {
+        let input = CsMat::csr_from_dense(
+            arr2(&[[8, 4, 1, 0], [4, 0, 8, 5], [2, 4, 6, 5], [2, 2, 2, 5]]).view(),
+            0,
+        );
+
+        let input2 = input.clone();
+        let result = input.hadamard_mul(&input2);
+
+        let expected = arr2(&[
+            [64, 16, 1, 0],
+            [16, 0, 64, 25],
+            [4, 16, 36, 25],
+            [4, 4, 4, 25],
+        ]);
+
+        assert_eq!(result.to_dense(), expected);
+
+        // Assert that it is NOT the same as the one provided by `sprs`.
+
+        let input3 = CsMat::csr_from_dense(
+            arr2(&[[8, 4, 1, 0], [4, 0, 8, 5], [2, 4, 6, 5], [2, 2, 2, 5]]).view(),
+            0,
+        );
+
+        let result2 = &input3 * &input3;
+
+        assert_ne!(result2.to_dense(), expected);
+    }
+
+    #[test]
+    fn transpose_works() {
+        let z = Zero::zero();
+
+        let c = CsMat::csr_from_dense(
+            arr2(&[
+                [Weight::new(100, 1), z, z],
+                [z, Weight::new(30, 1), z],
+                [z, Weight::new(60, 1), Weight::new(20, 1)],
+            ])
+            .view(),
+            z,
+        );
+
+        // Transpose the matrix
+        let actual = c.clone().transpose_into();
+
+        let expected = arr2(&[
+            [Weight::new(100, 1), z, z],
+            [z, Weight::new(30, 1), Weight::new(60, 1)],
+            [z, z, Weight::new(20, 1)],
+        ]);
+
+        assert_eq!(actual.to_dense(), expected);
+    }
+
+    #[test]
+    // Check that we can normalise by rows after a transposition.
+    fn normalise_after_transpose() {
+        let z = Zero::zero();
+        let o = One::one();
+
+        let c = CsMat::csr_from_dense(
+            arr2(&[
+                [Weight::new(100, 1), z, z],
+                [z, Weight::new(30, 1), z],
+                [z, Weight::new(60, 1), Weight::new(20, 1)],
+            ])
+            .view(),
+            z,
+        );
+
+        // Transpose the matrix and normalise it.
+
+        let actual = super::normalise_rows_naive(&c.clone().transpose_into());
+
+        let expected = arr2(&[
+            [o, z, z],
+            [z, Weight::new(1, 3), Weight::new(2, 3)],
+            [z, z, o],
+        ]);
+
+        assert_eq!(actual.to_dense(), expected);
+    }
+
+    #[test]
+    // Check that this implementation is the same as the one described in
+    // the basic model.
+    fn new_network_equal_basic_model() {
+        let z = Zero::zero();
+        let o = One::one();
+        let d = CsMat::csr_from_dense(arr2(&[[z, o, z], [z, z, z], [o, o, z]]).view(), z);
+
+        let c = CsMat::csr_from_dense(
+            arr2(&[
+                [Weight::new(100, 1), z, z],
+                [z, Weight::new(30, 1), z],
+                [z, Weight::new(60, 1), Weight::new(20, 1)],
+            ])
+            .view(),
+            z,
+        );
+        let m = CsMat::csr_from_dense(arr2(&[[o, z, z], [z, o, z], [z, o, z]]).view(), z);
+
+        let network = super::new_network_matrix(&d, &c, &m, HyperParams::default()).unwrap();
+
+        let expected = arr2(&[
+            [z, Weight::new(4, 7), z, Weight::new(3, 7), z, z],
+            [z, z, z, z, o, z],
+            [
+                Weight::new(2, 7),
+                Weight::new(2, 7),
+                z,
+                z,
+                Weight::new(11, 28),
+                Weight::new(1, 28),
+            ],
+            [o, z, z, z, z, z],
+            [z, Weight::new(1, 3), Weight::new(2, 3), z, z, z],
+            [z, z, o, z, z, z],
+        ]);
+
+        assert_eq!(network.to_dense(), expected);
     }
 
     #[test]

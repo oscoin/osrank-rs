@@ -7,7 +7,7 @@ use std::fmt;
 use std::ops::{Div, Mul, Rem};
 
 use fraction::{Fraction, GenericFraction};
-use num_traits::{Num, One, Zero};
+use num_traits::{Num, One, Signed, Zero};
 use petgraph::graph::NodeIndex;
 use petgraph::{Directed, Graph};
 
@@ -21,9 +21,18 @@ pub struct RandomWalk {
     random_walk_internal: Vec<NodeIndex>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Add, Sub)]
+#[derive(Clone, Copy, PartialEq, Add, Sub, Neg, PartialOrd)]
 pub struct Weight {
     get_weight: GenericFraction<u32>,
+}
+
+impl fmt::Debug for Weight {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        match (self.get_weight.numer(), self.get_weight.denom()) {
+            (Some(n), Some(d)) => write!(f, "{}/{}", n, d),
+            _ => write!(f, "NaN"),
+        }
+    }
 }
 
 impl Weight {
@@ -35,7 +44,7 @@ impl Weight {
 
     pub fn as_f64(self) -> Option<f64> {
         match (self.get_weight.numer(), self.get_weight.denom()) {
-            (Some(n), Some(d)) => Some(*n as f64 / *d as f64),
+            (Some(n), Some(d)) => Some(f64::from(*n) / f64::from(*d)),
             _ => None,
         }
     }
@@ -54,6 +63,34 @@ impl Mul for Weight {
         Weight {
             get_weight: self.get_weight * rhs.get_weight,
         }
+    }
+}
+
+impl Signed for Weight {
+    fn abs(self: &Self) -> Self {
+        Weight {
+            get_weight: self.get_weight.abs(),
+        }
+    }
+
+    fn abs_sub(self: &Self, other: &Self) -> Self {
+        Weight {
+            get_weight: self.get_weight.abs_sub(&other.get_weight),
+        }
+    }
+
+    fn signum(self: &Self) -> Self {
+        Weight {
+            get_weight: self.get_weight.signum(),
+        }
+    }
+
+    fn is_positive(self: &Self) -> bool {
+        self.get_weight.is_positive()
+    }
+
+    fn is_negative(self: &Self) -> bool {
+        self.get_weight.is_negative()
     }
 }
 
