@@ -16,7 +16,7 @@ use sprs::{hstack, vstack, CsMat, TriMat, TriMatBase};
 use num_traits::{Num, One, Signed, Zero};
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 
 //
 // Types
@@ -51,7 +51,7 @@ type Contributor = String;
 // We need a way to map external indexes with an incremental index suitable
 // for matrix manipulation, so we define this LocalMatrixIndex exactly for
 // this purpose.
-type LocalMatrixIndex = u64;
+type LocalMatrixIndex = usize;
 type SparseMatrix = CsMat<osrank::types::Weight>;
 type DependencyMatrix = SparseMatrix;
 type ContributionMatrix = SparseMatrix;
@@ -96,9 +96,10 @@ impl ContributionsMetadata {
 
 #[derive(Debug, Deserialize)]
 struct ContribRow {
+    project_id: ProjectId,
     contributor: String,
     repo: String,
-    contributions: u64,
+    contributions: u32,
     project_name: ProjectName,
 }
 
@@ -195,29 +196,38 @@ fn new_dependency_adjacency_matrix(
 ///    To say this differently, if the dependency matrix lists A,B,C as its
 ///    first projects, the contribution matrix will need to list A,B,C in
 ///    exactly the same order, without gaps.
-fn new_contribution_adjacency_matrix(
+fn new_contribution_adjacency_matrix<F>(
     deps_meta: &DependenciesMetadata,
     contribs_meta: &ContributionsMetadata,
-    contribs_csv: csv::Reader<File>,
-) -> Result<ContributionMatrix, AppError> {
-    // // Creates a sparse matrix of projects x contributors
-    // let mut contrib_adj: TriMat<osrank::types::Weight> =
-    //     TriMatBase::new((deps_meta.ids.len(), contribs_meta.contributors.len()));
+    contribs_csv: csv::Reader<F>,
+) -> Result<ContributionMatrix, AppError>
+where
+    F: Read,
+{
+    // Creates a sparse matrix of projects x contributors
+    let mut contrib_adj: TriMat<osrank::types::Weight> =
+        TriMatBase::new((deps_meta.ids.len(), contribs_meta.contributors.len()));
 
-    // // Iterate through the dependencies, populating the matrix.
-    // for result in deps_csv.into_records().filter_map(|e| e.ok()) {
-    //     let row: DepRow = result.deserialize(None)?;
-    //     if let (Some(from_index), Some(to_index)) = (
-    //         deps_meta.project2index.get(&row.from),
-    //         deps_meta.project2index.get(&row.to),
-    //     ) {
-    //         dep_adj.add_triplet(*from_index as usize, *to_index as usize, 1);
-    //     }
-    // }
+    for result in contribs_csv.into_records().filter_map(|e| e.ok()) {
+        let row: ContribRow = result.deserialize(None)?;
 
-    // Ok(dep_adj.to_csr())
+        match deps_meta
+            .project2index
+            .get(&row.project_id)
+            .and_then(|row_ix| {
+                contribs_meta
+                    .contributor2index
+                    .get(&row.contributor)
+                    .map(|col| (*row_ix, *col))
+            }) {
+            Some((row_ix, col_ix)) => {
+                contrib_adj.add_triplet(row_ix, col_ix, Weight::new(row.contributions, 1))
+            }
+            None => (),
+        }
+    }
 
-    unimplemented!()
+    Ok(contrib_adj.to_csr())
 }
 
 pub trait HadamardMul {
@@ -316,7 +326,7 @@ fn build_adjacency_matrix(
         deps_meta.labels.insert(row.name);
         deps_meta
             .project2index
-            .insert(row.id, deps_meta.ids.len() as u64 - 1);
+            .insert(row.id, deps_meta.ids.len() - 1);
     }
 
     // Iterate once over the contributions and build a matrix where
@@ -327,7 +337,7 @@ fn build_adjacency_matrix(
         contribs_meta.contributors.insert(row.contributor);
         contribs_meta
             .contributor2index
-            .insert(c, contribs_meta.contributors.len() as u64 - 1);
+            .insert(c, contribs_meta.contributors.len() - 1);
     }
 
     //TODO(adn) For now the maintenance matrix is empty.
@@ -400,6 +410,7 @@ fn main() -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use crate::HadamardMul;
+    use csv;
     use ndarray::arr2;
     use num_traits::{One, Zero};
     use osrank::types::{HyperParams, Weight};
@@ -566,5 +577,71 @@ mod tests {
         let dense = arr2(&[[0, 0, 0, 0], [5, 8, 0, 0], [0, 0, 3, 0], [0, 6, 0, 0]]);
 
         assert_eq!(dense, dep_adj.to_csr().to_dense());
+    }
+
+    #[test]
+    // Tests which simulates the following situation:
+    // * We have 3 projects: oscoin, osrank and radicle;
+    // * We have 3 contributors: foo, bar, baz;
+    // * foo & bar both contributes to oscoin;
+    // * baz contributes only to osrank;
+    // * The radicle project has no contributions.
+    fn test_contribution_matrix() {
+        let contrib_csv: String = String::from(
+            r###"
+ID,MAINTAINER,REPO,CONTRIBUTIONS,NAME
+10,github@foo,https://github.com/oscoin/oscoin,118,oscoin
+10,github@bar,https://github.com/oscoin/ocoin,32,oscoin
+15,github@baz,https://github.com/oscoin/osrank,10,osrank
+"###,
+        );
+
+        let dep_meta = super::DependenciesMetadata {
+            ids: [10, 15, 7].iter().cloned().collect(),
+            labels: [
+                String::from("oscoin"),
+                String::from("osrank"),
+                String::from("radicle"),
+            ]
+            .iter()
+            .cloned()
+            .collect(),
+            project2index: [(10, 0), (15, 1), (7, 2)].iter().cloned().collect(),
+        };
+
+        let contribs = super::ContributionsMetadata {
+            contributors: [
+                String::from("github@foo"),
+                String::from("github@bar"),
+                String::from("github@baz"),
+            ]
+            .iter()
+            .cloned()
+            .collect(),
+            contributor2index: [
+                (String::from("github@foo"), 0 as usize),
+                (String::from("github@bar"), 1 as usize),
+                (String::from("github@baz"), 2 as usize),
+            ]
+            .iter()
+            .cloned()
+            .collect(),
+        };
+
+        let contribs_records = csv::ReaderBuilder::new()
+            .flexible(true)
+            .from_reader(contrib_csv.as_bytes());
+
+        let actual =
+            super::new_contribution_adjacency_matrix(&dep_meta, &contribs, contribs_records)
+                .unwrap();
+
+        let expected = arr2(&[
+            [Weight::new(118, 1), Weight::new(32, 1), Weight::zero()],
+            [Weight::zero(), Weight::zero(), Weight::new(10, 1)],
+            [Weight::zero(), Weight::zero(), Weight::zero()],
+        ]);
+
+        assert_eq!(actual.to_dense(), expected);
     }
 }
