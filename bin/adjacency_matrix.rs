@@ -341,11 +341,15 @@ fn build_adjacency_matrix(
     }
 
     //TODO(adn) For now the maintenance matrix is empty.
+
+    println!("Assembling the dependency matrix...");
     let dep_adj_matrix = new_dependency_adjacency_matrix(&deps_meta, deps_csv)?;
+    println!("Assembling the contribution matrix...");
     let con_adj_matrix =
         new_contribution_adjacency_matrix(&deps_meta, &contribs_meta, contribs_csv)?;
-    let maintenance_matrix = CsMat::zero((con_adj_matrix.cols(), con_adj_matrix.cols()));
+    let maintenance_matrix = CsMat::zero((dep_adj_matrix.rows(), con_adj_matrix.cols()));
 
+    println!("Assembling the network matrix...");
     let network_matrix = new_network_matrix(
         &dep_adj_matrix,
         &con_adj_matrix,
@@ -353,8 +357,9 @@ fn build_adjacency_matrix(
         HyperParams::default(),
     )?;
 
+    println!("Write the matrix to file (skipped for now)");
     // Just for fun/debug: write this as a CSV file.
-    debug_sparse_matrix_to_csv(&network_matrix, "data/cargo-all-adj.csv")?;
+    // debug_sparse_matrix_to_csv(&network_matrix, "data/cargo-all-adj.csv")?;
 
     Ok(())
 }
