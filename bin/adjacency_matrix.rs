@@ -312,7 +312,7 @@ fn build_adjacency_matrix(
 ) -> Result<(), AppError> {
     let deps_csv = csv::Reader::from_reader(File::open(deps_file)?);
     let deps_meta_csv = csv::Reader::from_reader(File::open(deps_meta_file)?);
-    let mut contribs_csv = csv::Reader::from_reader(File::open(contrib_file)?);
+    let contribs_csv_first_pass = csv::Reader::from_reader(File::open(contrib_file)?);
 
     let mut deps_meta = DependenciesMetadata::new();
     let mut contribs_meta = ContributionsMetadata::new();
@@ -331,7 +331,10 @@ fn build_adjacency_matrix(
 
     // Iterate once over the contributions and build a matrix where
     // rows are the project names and columns the (unique) contributors.
-    for result in contribs_csv.records().filter_map(|e| e.ok()) {
+    for result in contribs_csv_first_pass
+        .into_records()
+        .filter_map(|e| e.ok())
+    {
         let row: ContribRow = result.deserialize(None)?;
         let c = row.contributor.clone();
         contribs_meta.contributors.insert(row.contributor);
@@ -340,12 +343,19 @@ fn build_adjacency_matrix(
             .insert(c, contribs_meta.contributors.len() - 1);
     }
 
+    //"Rewind" the file as we need a second pass.
+    let contribs_csv = csv::Reader::from_reader(File::open(contrib_file)?);
+
     //TODO(adn) For now the maintenance matrix is empty.
+
+    println!("Assembling the dependency matrix...");
     let dep_adj_matrix = new_dependency_adjacency_matrix(&deps_meta, deps_csv)?;
+    println!("Assembling the contribution matrix...");
     let con_adj_matrix =
         new_contribution_adjacency_matrix(&deps_meta, &contribs_meta, contribs_csv)?;
-    let maintenance_matrix = CsMat::zero((con_adj_matrix.cols(), con_adj_matrix.cols()));
+    let maintenance_matrix = CsMat::zero((dep_adj_matrix.rows(), con_adj_matrix.cols()));
 
+    println!("Assembling the network matrix...");
     let network_matrix = new_network_matrix(
         &dep_adj_matrix,
         &con_adj_matrix,
@@ -353,8 +363,9 @@ fn build_adjacency_matrix(
         HyperParams::default(),
     )?;
 
+    println!("Write the matrix to file (skipped for now)");
     // Just for fun/debug: write this as a CSV file.
-    debug_sparse_matrix_to_csv(&network_matrix, "data/cargo-all-adj.csv")?;
+    //debug_sparse_matrix_to_csv(&con_adj_matrix, "data/cargo-contrib-adj.csv")?;
 
     Ok(())
 }
