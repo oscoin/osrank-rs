@@ -21,6 +21,9 @@ pub struct RandomWalk {
     random_walk_internal: Vec<NodeIndex>,
 }
 
+// Just an alias for now.
+pub type SeedSet = ();
+
 #[derive(Clone, Copy, PartialEq, Add, Sub, Neg, PartialOrd)]
 pub struct Weight {
     get_weight: GenericFraction<u32>,
