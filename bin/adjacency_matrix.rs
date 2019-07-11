@@ -312,7 +312,7 @@ fn build_adjacency_matrix(
 ) -> Result<(), AppError> {
     let deps_csv = csv::Reader::from_reader(File::open(deps_file)?);
     let deps_meta_csv = csv::Reader::from_reader(File::open(deps_meta_file)?);
-    let mut contribs_csv = csv::Reader::from_reader(File::open(contrib_file)?);
+    let contribs_csv_first_pass = csv::Reader::from_reader(File::open(contrib_file)?);
 
     let mut deps_meta = DependenciesMetadata::new();
     let mut contribs_meta = ContributionsMetadata::new();
@@ -331,7 +331,10 @@ fn build_adjacency_matrix(
 
     // Iterate once over the contributions and build a matrix where
     // rows are the project names and columns the (unique) contributors.
-    for result in contribs_csv.records().filter_map(|e| e.ok()) {
+    for result in contribs_csv_first_pass
+        .into_records()
+        .filter_map(|e| e.ok())
+    {
         let row: ContribRow = result.deserialize(None)?;
         let c = row.contributor.clone();
         contribs_meta.contributors.insert(row.contributor);
@@ -339,6 +342,9 @@ fn build_adjacency_matrix(
             .contributor2index
             .insert(c, contribs_meta.contributors.len() - 1);
     }
+
+    //"Rewind" the file as we need a second pass.
+    let contribs_csv = csv::Reader::from_reader(File::open(contrib_file)?);
 
     //TODO(adn) For now the maintenance matrix is empty.
 
@@ -359,7 +365,7 @@ fn build_adjacency_matrix(
 
     println!("Write the matrix to file (skipped for now)");
     // Just for fun/debug: write this as a CSV file.
-    // debug_sparse_matrix_to_csv(&network_matrix, "data/cargo-all-adj.csv")?;
+    //debug_sparse_matrix_to_csv(&con_adj_matrix, "data/cargo-contrib-adj.csv")?;
 
     Ok(())
 }
