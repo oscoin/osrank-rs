@@ -18,6 +18,9 @@ In particular:
   contributions. It can be parameterised by platform to generate multiple CSV
   files.
 
+* `osrank-adjacency-matrix` can be used to calculate the adjancency matrix
+  for a whole network using the formula of the basic model.
+
 ## Before starting
 
 For the sake of not committing bit objects into `git`, we do not store these
@@ -71,3 +74,15 @@ This script will take a while to run as it is throttled to ensure we do not
 hit Github's Quota Limit, as authenticated users are allowed to only perform
 5000 requests per hour. At the end of the process, this will produce a 
 `data/cargo_contributions.csv` file on disk.
+
+## osrank-adjacency-matrix
+
+In order to compute the pagerank (the naive version) we rely on matrix inversion,
+which is provided by `ndarray-linalg` and BLAS. This means that the user is 
+required to install `gfortran` on this system before running the executable.
+For example, running the tests via `cargo watch` is done by:
+
+```
+RUSTFLAGS='-L/usr/local/Cellar/gcc/8.3.0/lib/gcc/8' cargo watch -x \
+'test --features build-binary --bin osrank-adjacency-matrix'
+```

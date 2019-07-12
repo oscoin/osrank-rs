@@ -1,6 +1,7 @@
 extern crate clap;
 extern crate failure;
 extern crate ndarray;
+extern crate ndarray_linalg;
 extern crate num_traits;
 extern crate osrank;
 extern crate serde;
@@ -13,6 +14,8 @@ use serde::Deserialize;
 use sprs::binop::scalar_mul_mat;
 use sprs::{hstack, vstack, CsMat, TriMat, TriMatBase};
 
+use ndarray::Array2;
+use ndarray_linalg::solve::Inverse;
 use num_traits::{Num, One, Signed, Zero};
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
@@ -112,6 +115,41 @@ struct DepRow {
 //
 // Functions
 //
+
+/// Simple but naive implementation of pagerank that requires inverting an
+/// nxn matrix.
+/// See: http://michaelnielsen.org/blog/lectures-on-the-google-technology-stack-1-introduction-to-pagerank/
+/// NOTE(adn) This function is not inside osrank::algorithm as it requires
+/// external libraries and therefore might not be suitable for WASM compilation,
+/// if ever needed.
+pub fn pagerank_naive(g: &CsMat<f64>, alpha: f64, outbound_links_factor: f64) -> CsMat<f64> {
+    let prop_visiting = 1.0 - alpha;
+    let prop_teleporting = alpha;
+
+    // Based on the formula:
+    //
+    // page_rank_matrix = prop_teleporting * ((I-prop_visiting*G)**-1)*((1.0/n)*ones(n,1))
+    //
+
+    let eye_matrix = Array2::eye(g.cols());
+    let m1 = CsMat::csr_from_dense(
+        (eye_matrix - (prop_visiting * g.to_dense()))
+            .view()
+            .inv()
+            .expect("matrix inversion failed")
+            .view(),
+        0.0,
+    );
+
+    let e_matrix = scalar_mul_mat(
+        &CsMat::csr_from_dense((Array2::ones((g.rows(), 1))).view(), 0.0),
+        outbound_links_factor,
+    );
+
+    let pagerank_matrix = scalar_mul_mat(&(&m1 * &e_matrix), prop_teleporting);
+
+    pagerank_matrix
+}
 
 /// Normalises the rows for the input matrix.
 fn normalise_rows_mut<N>(matrix: &mut CsMat<N>)
@@ -651,6 +689,26 @@ ID,MAINTAINER,REPO,CONTRIBUTIONS,NAME
             [Weight::new(118, 1), Weight::new(32, 1), Weight::zero()],
             [Weight::zero(), Weight::zero(), Weight::new(10, 1)],
             [Weight::zero(), Weight::zero(), Weight::zero()],
+        ]);
+
+        assert_eq!(actual.to_dense(), expected);
+    }
+
+    #[test]
+    fn pagerank_naive_f64() {
+        let input = CsMat::csr_from_dense(
+            arr2(&[[0.5, 0.5, 0.], [0.5, 0., 0.], [0., 0.5, 1.0]]).view(),
+            0.0,
+        );
+        let alpha = 0.15;
+        let outbound_links_factor = 1.0 / 3.0;
+
+        let actual = super::pagerank_naive(&input, alpha, outbound_links_factor);
+
+        let expected = arr2(&[
+            [0.18066561014263074],
+            [0.12678288431061807],
+            [0.6925515055467512],
         ]);
 
         assert_eq!(actual.to_dense(), expected);
