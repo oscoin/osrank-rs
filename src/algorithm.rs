@@ -3,11 +3,6 @@ extern crate ndarray;
 extern crate sprs;
 
 use crate::types::{Network, RandomWalks, SeedSet};
-use ndarray::Array2;
-use num_traits::{Num, Signed};
-use sprs::binop::{add_mat_same_storage, scalar_mul_mat};
-use sprs::CsMat;
-use std::ops::Add;
 
 pub enum OsrankError {}
 
@@ -50,28 +45,5 @@ pub fn rank_network(
     random_walks: &RandomWalks,
     network_view: &mut NetworkView,
 ) -> Result<(), OsrankError> {
-    unimplemented!()
-}
-
-pub fn pagerank_naive<N>(m: &CsMat<N>, alpha: N) -> CsMat<N>
-where
-    N: Num + Copy + Signed + PartialOrd + Add,
-{
-    let prop_visiting = N::one() - alpha;
-    let prop_teleporting = alpha;
-
-    // Computes the two matrixes. One is created by multiplying @m@ by
-    // @prop_visiting@, whereas the second is computed by multiplying a
-    // matrix of all ones by the weight for "no outbound links".
-
-    let g_matrix: CsMat<N> = scalar_mul_mat(m, prop_visiting);
-
-    let e_matrix: CsMat<N> =
-        CsMat::csr_from_dense(Array2::ones((m.rows(), m.cols())).view(), N::zero());
-
-    let pagerank_matrix = add_mat_same_storage(&g_matrix, &e_matrix);
-
-    // Extract the final probability distribution
-
     unimplemented!()
 }
