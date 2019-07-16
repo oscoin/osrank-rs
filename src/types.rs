@@ -45,7 +45,7 @@ impl Weight {
         }
     }
 
-    pub fn as_f64(self) -> Option<f64> {
+    pub fn as_f64(&self) -> Option<f64> {
         match (self.get_weight.numer(), self.get_weight.denom()) {
             (Some(n), Some(d)) => Some(f64::from(*n) / f64::from(*d)),
             _ => None,
@@ -56,6 +56,12 @@ impl Weight {
 impl Default for Weight {
     fn default() -> Self {
         One::one()
+    }
+}
+
+impl std::convert::From<Weight> for f64 {
+    fn from(w: Weight) -> Self {
+        w.as_f64().unwrap()
     }
 }
 
@@ -112,7 +118,7 @@ impl Rem for Weight {
 
     fn rem(self, rhs: Self) -> Self::Output {
         Weight {
-            get_weight: self.get_weight % rhs.get_weight,
+            get_weight: self.get_weight.rem(rhs.get_weight),
         }
     }
 }
