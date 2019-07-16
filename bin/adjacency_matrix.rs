@@ -9,17 +9,38 @@ extern crate sprs;
 
 use clap::{App, Arg};
 use failure::Fail;
+use ndarray::Array2;
+use ndarray_linalg::solve::Inverse;
 use osrank::types::{HyperParams, Weight};
 use serde::Deserialize;
 use sprs::binop::scalar_mul_mat;
 use sprs::{hstack, vstack, CsMat, TriMat, TriMatBase};
 
-use ndarray::Array2;
-use ndarray_linalg::solve::Inverse;
+use core::fmt::Debug;
 use num_traits::{Num, One, Signed, Zero};
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
+
+//
+// Utility Traits
+//
+
+pub trait DisplayAsF64 {
+    fn to_f64(self) -> f64;
+}
+
+impl DisplayAsF64 for f64 {
+    fn to_f64(self: f64) -> f64 {
+        self
+    }
+}
+
+impl DisplayAsF64 for Weight {
+    fn to_f64(self: Weight) -> f64 {
+        self.as_f64().unwrap()
+    }
+}
 
 //
 // Types
@@ -55,10 +76,10 @@ type Contributor = String;
 // for matrix manipulation, so we define this LocalMatrixIndex exactly for
 // this purpose.
 type LocalMatrixIndex = usize;
-type SparseMatrix = CsMat<osrank::types::Weight>;
-type DependencyMatrix = SparseMatrix;
-type ContributionMatrix = SparseMatrix;
-type MaintenanceMatrix = SparseMatrix;
+type SparseMatrix<N> = CsMat<N>;
+type DependencyMatrix<N> = SparseMatrix<N>;
+type ContributionMatrix<N> = SparseMatrix<N>;
+type MaintenanceMatrix<N> = SparseMatrix<N>;
 
 #[derive(Debug, Deserialize)]
 struct DepMetaRow {
@@ -151,6 +172,45 @@ pub fn pagerank_naive(g: &CsMat<f64>, alpha: f64, outbound_links_factor: f64) ->
     pagerank_matrix
 }
 
+pub fn assert_normalised<N>(matrix: &CsMat<N>)
+where
+    N: One + Num + Copy + Debug + DisplayAsF64,
+{
+    for (row_ix, row_vec) in matrix.outer_iterator().enumerate() {
+        let norm = row_vec.iter().fold(N::zero(), |acc, v| acc + *(v.1));
+
+        if norm != N::zero() && norm != N::one() {
+            panic!(
+                "The matrix is not normalised correctly for {:#?}. Sum was: {:#?}",
+                row_ix,
+                norm.to_f64()
+            );
+        }
+    }
+}
+
+/// Normalises the columnss for the input (transposed) matrix in preparation
+/// for pagerank, by turning each zero-column into probability distributions.
+pub fn pagerank_normalise<N>(sparse: &SparseMatrix<N>, outbound_links_factor: N) -> SparseMatrix<N>
+where
+    N: Zero + PartialEq + Clone + Copy + Signed + PartialOrd,
+{
+    let mut matrix = sparse.to_dense();
+    let matrix_rows = matrix.rows();
+
+    for col_ix in 0..matrix.cols() {
+        let norm = (0..matrix.rows()).fold(N::zero(), |acc, ix| acc + matrix[[ix, col_ix]]);
+
+        if norm == N::zero() {
+            for ix in 0..matrix_rows {
+                matrix[[ix, col_ix]] = outbound_links_factor;
+            }
+        }
+    }
+
+    CsMat::csr_from_dense(matrix.view(), N::zero())
+}
+
 /// Normalises the rows for the input matrix.
 fn normalise_rows_mut<N>(matrix: &mut CsMat<N>)
 where
@@ -174,7 +234,7 @@ where
 /// N.B. It returns a brand new Matrix, therefore it performs a copy.
 /// FIXME(adn) Is there a way to yield only a (partial) view copying only
 /// the values?
-fn normalise_rows<N>(matrix: &CsMat<N>) -> CsMat<N>
+fn normalise_rows<N>(matrix: &SparseMatrix<N>) -> SparseMatrix<N>
 where
     N: Num + Copy,
 {
@@ -183,33 +243,23 @@ where
     cloned
 }
 
-//FIXME(adn) Inefficient version that convert to dense, normalise, and
-//finally reconverts back.
-fn normalise_rows_naive<N>(matrix: &CsMat<N>) -> CsMat<N>
+fn transpose_storage<N>(matrix: &SparseMatrix<N>) -> SparseMatrix<N>
 where
-    N: Num + Copy + Signed + PartialOrd,
+    N: Num + Copy + Signed + PartialOrd + Default,
 {
-    let mut dense = matrix.to_dense();
-
-    for mut row_vec in dense.outer_iter_mut() {
-        let norm = row_vec.iter().fold(N::zero(), |acc, v| acc + *v);
-        if norm != N::zero() {
-            for ix in 0..row_vec.len() {
-                row_vec[ix] = row_vec[ix] / norm;
-            }
-        }
-    }
-
-    CsMat::csr_from_dense(dense.view(), N::zero())
+    CsMat::csr_from_dense(matrix.to_dense().t().view(), N::zero())
 }
 
 /// Creates a (sparse) adjacency matrix for the dependencies.
 /// Corresponds to the "cargo-dep-adj.csv" from the Python scripts.
-fn new_dependency_adjacency_matrix(
+fn new_dependency_adjacency_matrix<N>(
     deps_meta: &DependenciesMetadata,
     deps_csv: csv::Reader<File>,
-) -> Result<DependencyMatrix, AppError> {
-    let mut dep_adj: TriMat<Weight> = TriMatBase::new((deps_meta.ids.len(), deps_meta.ids.len()));
+) -> Result<DependencyMatrix<N>, AppError>
+where
+    N: Num + Clone,
+{
+    let mut dep_adj: TriMat<N> = TriMatBase::new((deps_meta.ids.len(), deps_meta.ids.len()));
 
     // Iterate through the dependencies, populating the matrix.
     for result in deps_csv.into_records().filter_map(|e| e.ok()) {
@@ -222,6 +272,7 @@ fn new_dependency_adjacency_matrix(
         }
     }
 
+    println!("{}x{}", dep_adj.rows(), dep_adj.cols());
     Ok(dep_adj.to_csr())
 }
 
@@ -234,16 +285,18 @@ fn new_dependency_adjacency_matrix(
 ///    To say this differently, if the dependency matrix lists A,B,C as its
 ///    first projects, the contribution matrix will need to list A,B,C in
 ///    exactly the same order, without gaps.
-fn new_contribution_adjacency_matrix<F>(
+fn new_contribution_adjacency_matrix<F, N>(
     deps_meta: &DependenciesMetadata,
     contribs_meta: &ContributionsMetadata,
     contribs_csv: csv::Reader<F>,
-) -> Result<ContributionMatrix, AppError>
+    mk_contribution: Box<dyn Fn(u32) -> N>,
+) -> Result<ContributionMatrix<N>, AppError>
 where
     F: Read,
+    N: Num + Clone,
 {
     // Creates a sparse matrix of projects x contributors
-    let mut contrib_adj: TriMat<osrank::types::Weight> =
+    let mut contrib_adj: TriMat<N> =
         TriMatBase::new((deps_meta.ids.len(), contribs_meta.contributors.len()));
 
     for result in contribs_csv.into_records().filter_map(|e| e.ok()) {
@@ -259,56 +312,68 @@ where
                     .map(|col| (*row_ix, *col))
             }) {
             Some((row_ix, col_ix)) => {
-                contrib_adj.add_triplet(row_ix, col_ix, Weight::new(row.contributions, 1))
+                contrib_adj.add_triplet(row_ix, col_ix, mk_contribution(row.contributions))
             }
             None => (),
         }
     }
 
+    println!("{}x{}", contrib_adj.rows(), contrib_adj.cols());
     Ok(contrib_adj.to_csr())
 }
 
-pub trait HadamardMul {
-    type Input;
-    fn hadamard_mul(self, rhs: &Self::Input) -> Self::Input;
+// Inefficient implementation of the Hadamard multiplication that operates
+// on the dense representation.
+fn hadamard_mul<N>(lhs: SparseMatrix<N>, rhs: &SparseMatrix<N>) -> SparseMatrix<N>
+where
+    N: Zero + PartialOrd + Signed + Clone,
+{
+    CsMat::csr_from_dense((lhs.to_dense() * rhs.to_dense()).view(), Zero::zero())
 }
 
-impl HadamardMul for SparseMatrix {
-    type Input = SparseMatrix;
-
-    //FIXME(adn) Inefficient version that converts into dense first.
-    fn hadamard_mul(self: Self, rhs: &SparseMatrix) -> SparseMatrix {
-        CsMat::csr_from_dense((self.to_dense() * rhs.to_dense()).view(), Zero::zero())
-    }
-}
-
-impl HadamardMul for CsMat<i32> {
-    type Input = CsMat<i32>;
-    fn hadamard_mul(self: Self, rhs: &Self) -> Self {
-        CsMat::csr_from_dense((self.to_dense() * rhs.to_dense()).view(), Zero::zero())
-    }
-}
-
-fn new_network_matrix(
-    dep_matrix: &DependencyMatrix,
-    contrib_matrix: &ContributionMatrix,
-    maintainer_matrix: &MaintenanceMatrix,
+fn new_network_matrix<N>(
+    dep_matrix: &DependencyMatrix<N>,
+    contrib_matrix: &ContributionMatrix<N>,
+    maintainer_matrix: &MaintenanceMatrix<N>,
     hyperparams: HyperParams,
-) -> Result<SparseMatrix, AppError> {
-    let contrib_t = contrib_matrix.clone().transpose_into();
-    let contrib_t_norm = normalise_rows_naive(&contrib_t);
+) -> Result<SparseMatrix<N>, AppError>
+where
+    N: Num + Copy + Default + From<osrank::types::Weight> + PartialOrd + Signed,
+{
+    let contrib_t = transpose_storage(&contrib_matrix);
+    let contrib_t_norm = normalise_rows(&contrib_t);
+
+    println!("assert_normalised(contrib_matrix)");
+    //assert_normalised(&normalise_rows(&contrib_matrix));
+
+    println!("assert_normalised(dep_matrix)");
+    //assert_normalised(&normalise_rows(&dep_matrix));
+
+    println!("assert_normalised(contrib_t_norm)");
+    //assert_normalised(&contrib_t_norm);
+
     let maintainer_t = maintainer_matrix.clone().transpose_into();
     let maintainer_norm = normalise_rows(&maintainer_matrix);
 
-    let project_to_project =
-        scalar_mul_mat(&normalise_rows(&dep_matrix), hyperparams.depend_factor);
-    let project_to_account = &scalar_mul_mat(&maintainer_norm, hyperparams.maintain_factor)
-        + &scalar_mul_mat(&normalise_rows(&contrib_matrix), hyperparams.contrib_factor);
-    let account_to_project = &scalar_mul_mat(&maintainer_t, hyperparams.maintain_prime_factor)
-        .hadamard_mul(&contrib_t_norm)
-        + &scalar_mul_mat(&contrib_t_norm, hyperparams.contrib_prime_factor);
+    println!("assert_normalised(maintainer_matrix)");
+    //assert_normalised(&maintainer_norm);
 
-    let account_to_account: SparseMatrix =
+    let project_to_project = scalar_mul_mat(
+        &normalise_rows(&dep_matrix),
+        hyperparams.depend_factor.into(),
+    );
+    let project_to_account = &scalar_mul_mat(&maintainer_norm, hyperparams.maintain_factor.into())
+        + &scalar_mul_mat(
+            &normalise_rows(&contrib_matrix),
+            hyperparams.contrib_factor.into(),
+        );
+    let account_to_project =
+        &hadamard_mul(
+            scalar_mul_mat(&maintainer_t, hyperparams.maintain_prime_factor.into()),
+            &contrib_t_norm,
+        ) + &scalar_mul_mat(&contrib_t_norm, hyperparams.contrib_prime_factor.into());
+
+    let account_to_account: SparseMatrix<N> =
         CsMat::zero((contrib_matrix.cols(), contrib_matrix.cols()));
 
     // Join the matrixes together
@@ -318,7 +383,10 @@ fn new_network_matrix(
     Ok(normalise_rows(&vstack(&vec![q1_q2.view(), q3_q4.view()])))
 }
 
-fn debug_sparse_matrix_to_csv(matrix: &SparseMatrix, out_path: &str) -> Result<(), AppError> {
+fn debug_sparse_matrix_to_csv<N>(matrix: &CsMat<N>, out_path: &str) -> Result<(), AppError>
+where
+    N: DisplayAsF64 + Zero + Clone + Copy,
+{
     let mut output_csv = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -327,13 +395,9 @@ fn debug_sparse_matrix_to_csv(matrix: &SparseMatrix, out_path: &str) -> Result<(
     for row in matrix.to_dense().genrows() {
         if let Some((last, els)) = row.as_slice().and_then(|e| e.split_last()) {
             for cell in els {
-                output_csv.write_all(
-                    format!("{},", (*cell).as_f64().unwrap())
-                        .as_str()
-                        .as_bytes(),
-                )?;
+                output_csv.write_all(format!("{},", cell.to_f64()).as_str().as_bytes())?;
             }
-            output_csv.write_all(format!("{}", (*last).as_f64().unwrap()).as_str().as_bytes())?;
+            output_csv.write_all(format!("{}", (*last).to_f64()).as_str().as_bytes())?;
         }
         output_csv.write_all(b"\n")?;
     }
@@ -389,8 +453,12 @@ fn build_adjacency_matrix(
     println!("Assembling the dependency matrix...");
     let dep_adj_matrix = new_dependency_adjacency_matrix(&deps_meta, deps_csv)?;
     println!("Assembling the contribution matrix...");
-    let con_adj_matrix =
-        new_contribution_adjacency_matrix(&deps_meta, &contribs_meta, contribs_csv)?;
+    let con_adj_matrix = new_contribution_adjacency_matrix(
+        &deps_meta,
+        &contribs_meta,
+        contribs_csv,
+        Box::new(|c| c as f64),
+    )?;
     let maintenance_matrix = CsMat::zero((dep_adj_matrix.rows(), con_adj_matrix.cols()));
 
     println!("Assembling the network matrix...");
@@ -401,9 +469,29 @@ fn build_adjacency_matrix(
         HyperParams::default(),
     )?;
 
+    println!("assert_normalised(network_matrix)");
+    //assert_normalised(&network_matrix);
+
+    println!(
+        "Generated a matrix of {}x{}",
+        network_matrix.rows(),
+        network_matrix.cols()
+    );
+
+    println!("Transposing the network matrix...");
+    let network_matrix_t = transpose_storage(&network_matrix);
+    println!("Normalise into a probability distribution...");
+    let network_t_norm = pagerank_normalise(
+        &network_matrix_t,
+        Weight::new(1, network_matrix_t.rows() as u32).to_f64(),
+    );
+
+    println!("Computing the pagerank...");
+    let pagerank_matrix = pagerank_naive(&network_t_norm, 0.15, 1.0 / network_matrix.rows() as f64);
+
     println!("Write the matrix to file (skipped for now)");
     // Just for fun/debug: write this as a CSV file.
-    //debug_sparse_matrix_to_csv(&con_adj_matrix, "data/cargo-contrib-adj.csv")?;
+    debug_sparse_matrix_to_csv(&pagerank_matrix, "data/cargo-page-rank.csv")?;
 
     Ok(())
 }
@@ -458,7 +546,6 @@ fn main() -> Result<(), AppError> {
 
 #[cfg(test)]
 mod tests {
-    use crate::HadamardMul;
     use csv;
     use ndarray::arr2;
     use num_traits::{One, Zero};
@@ -494,7 +581,7 @@ mod tests {
         );
 
         let input2 = input.clone();
-        let result = input.hadamard_mul(&input2);
+        let result = super::hadamard_mul(input, &input2);
 
         let expected = arr2(&[
             [64, 16, 1, 0],
@@ -561,7 +648,7 @@ mod tests {
 
         // Transpose the matrix and normalise it.
 
-        let actual = super::normalise_rows_naive(&c.clone().transpose_into());
+        let actual = super::normalise_rows(&super::transpose_storage(&c));
 
         let expected = arr2(&[
             [o, z, z],
@@ -681,9 +768,13 @@ ID,MAINTAINER,REPO,CONTRIBUTIONS,NAME
             .flexible(true)
             .from_reader(contrib_csv.as_bytes());
 
-        let actual =
-            super::new_contribution_adjacency_matrix(&dep_meta, &contribs, contribs_records)
-                .unwrap();
+        let actual = super::new_contribution_adjacency_matrix(
+            &dep_meta,
+            &contribs,
+            contribs_records,
+            Box::new(|c| Weight::new(c, 1)),
+        )
+        .unwrap();
 
         let expected = arr2(&[
             [Weight::new(118, 1), Weight::new(32, 1), Weight::zero()],
@@ -709,6 +800,39 @@ ID,MAINTAINER,REPO,CONTRIBUTIONS,NAME
             [0.18066561014263074],
             [0.12678288431061807],
             [0.6925515055467512],
+        ]);
+
+        assert_eq!(actual.to_dense(), expected);
+    }
+
+    #[test]
+    fn pagerank_normalise_mut_works() {
+        let z = Weight::zero();
+        let o = Weight::one();
+        let input = CsMat::csr_from_dense(
+            arr2(&[
+                [z, z, z],
+                [Weight::new(1, 2), z, Weight::new(1, 2)],
+                [o, z, z],
+            ])
+            .t(),
+            Weight::zero(),
+        );
+
+        let transposed = arr2(&[
+            [z, Weight::new(1, 2), o],
+            [z, z, z],
+            [z, Weight::new(1, 2), z],
+        ]);
+
+        assert_eq!(input.to_dense(), transposed);
+
+        let actual = super::pagerank_normalise(&input, Weight::new(1, 3));
+
+        let expected = arr2(&[
+            [Weight::new(1, 3), Weight::new(1, 2), o],
+            [Weight::new(1, 3), z, z],
+            [Weight::new(1, 3), Weight::new(1, 2), z],
         ]);
 
         assert_eq!(actual.to_dense(), expected);
