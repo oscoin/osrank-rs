@@ -157,16 +157,22 @@ pub fn pagerank_naive(
     // page_rank_matrix = prop_teleporting * ((I-prop_visiting*G)**-1)*((1.0/n)*ones(n,1))
     //
 
-    let eye_matrix = Array2::eye(g.rows());
+    let eye_matrix = Array2::eye(g.cols());
+    let m1 = CsMat::csr_from_dense(
+        (eye_matrix - (prop_visiting * g))
+            .view()
+            .inv()
+            .expect("matrix inversion failed")
+            .view(),
+        0.0,
+    );
 
-    let m1 = (eye_matrix - (prop_visiting * g))
-        .view()
-        .inv()
-        .expect("matrix inversion failed");
+    let e_matrix = scalar_mul_mat(
+        &CsMat::csr_from_dense((Array2::ones((g.rows(), 1))).view(), 0.0),
+        outbound_links_factor,
+    );
 
-    let p = outbound_links_factor * Array2::ones((g.rows(), 1));
-
-    (prop_teleporting * m1).dot(&p)
+    scalar_mul_mat(&(&m1 * &e_matrix), prop_teleporting).to_dense()
 }
 
 pub fn assert_rows_normalised<N>(matrix: &CsMat<N>, epsilon: N)
@@ -835,9 +841,9 @@ ID,MAINTAINER,REPO,CONTRIBUTIONS,NAME
         let actual = super::pagerank_naive(&input, alpha, outbound_links_factor);
 
         let expected = arr2(&[
-            [0.18066561014263077],
+            [0.18066561014263074],
             [0.12678288431061807],
-            [0.6925515055467511],
+            [0.6925515055467512],
         ]);
 
         assert_eq!(actual, expected);

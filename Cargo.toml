@@ -49,7 +49,7 @@ derive_more = "^0.13"
 petgraph = "0.4.13"
 fraction = "0.6"
 sprs = "^0.6"
-ndarray = "^0.12"
+ndarray = "=0.12.1"
 
 
 # Binary-only dependencies
