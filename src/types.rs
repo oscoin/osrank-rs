@@ -13,12 +13,50 @@ use petgraph::{Directed, Graph};
 
 type Osrank = Fraction;
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct RandomWalks {
-    random_walks_internal: HashSet<RandomWalk>,
+    random_walks_internal: Vec<RandomWalk>,
 }
 
+impl RandomWalks {
+    pub fn new() -> Self {
+        RandomWalks {
+            random_walks_internal: Vec::new(),
+        }
+    }
+
+    pub fn add_walk(&mut self, walk: RandomWalk) {
+        self.random_walks_internal.push(walk);
+    }
+
+    pub fn len(self) -> usize {
+        self.random_walks_internal.len()
+    }
+
+    pub fn count_visits(&self, idx: NodeIndex) -> usize {
+        self.random_walks_internal.iter().map(|rw| rw.count_visits(&idx)).sum()
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct RandomWalk {
     random_walk_internal: Vec<NodeIndex>,
+}
+
+impl RandomWalk {
+    pub fn new() -> Self {
+        RandomWalk {
+            random_walk_internal: Vec::new(),
+        }
+    }
+
+    pub fn add_next(&mut self, idx: NodeIndex) {
+        self.random_walk_internal.push(idx);
+    }
+
+    pub fn count_visits(&self, idx: &NodeIndex) -> usize {
+        self.random_walk_internal.iter().filter(|i| i == &idx).count()
+    }
 }
 
 // Just an alias for now.
