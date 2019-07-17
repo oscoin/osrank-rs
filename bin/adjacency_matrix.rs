@@ -77,6 +77,7 @@ type Contributor = String;
 // this purpose.
 type LocalMatrixIndex = usize;
 type SparseMatrix<N> = CsMat<N>;
+type DenseMatrix<N> = Array2<N>;
 type DependencyMatrix<N> = SparseMatrix<N>;
 type ContributionMatrix<N> = SparseMatrix<N>;
 type MaintenanceMatrix<N> = SparseMatrix<N>;
@@ -143,7 +144,11 @@ struct DepRow {
 /// NOTE(adn) This function is not inside osrank::algorithm as it requires
 /// external libraries and therefore might not be suitable for WASM compilation,
 /// if ever needed.
-pub fn pagerank_naive(g: &CsMat<f64>, alpha: f64, outbound_links_factor: f64) -> CsMat<f64> {
+pub fn pagerank_naive(
+    g: &DenseMatrix<f64>,
+    alpha: f64,
+    outbound_links_factor: f64,
+) -> DenseMatrix<f64> {
     let prop_visiting = 1.0 - alpha;
     let prop_teleporting = alpha;
 
@@ -152,34 +157,28 @@ pub fn pagerank_naive(g: &CsMat<f64>, alpha: f64, outbound_links_factor: f64) ->
     // page_rank_matrix = prop_teleporting * ((I-prop_visiting*G)**-1)*((1.0/n)*ones(n,1))
     //
 
-    let eye_matrix = Array2::eye(g.cols());
-    let m1 = CsMat::csr_from_dense(
-        (eye_matrix - (prop_visiting * g.to_dense()))
-            .view()
-            .inv()
-            .expect("matrix inversion failed")
-            .view(),
-        0.0,
-    );
+    let eye_matrix = Array2::eye(g.rows());
 
-    let e_matrix = scalar_mul_mat(
-        &CsMat::csr_from_dense((Array2::ones((g.rows(), 1))).view(), 0.0),
-        outbound_links_factor,
-    );
+    let m1 = (eye_matrix - (prop_visiting * g))
+        .view()
+        .inv()
+        .expect("matrix inversion failed");
 
-    let pagerank_matrix = scalar_mul_mat(&(&m1 * &e_matrix), prop_teleporting);
+    let p = outbound_links_factor * Array2::ones((g.rows(), 1));
 
-    pagerank_matrix
+    (prop_teleporting * m1).dot(&p)
 }
 
-pub fn assert_normalised<N>(matrix: &CsMat<N>)
+pub fn assert_rows_normalised<N>(matrix: &CsMat<N>, epsilon: N)
 where
-    N: One + Num + Copy + Debug + DisplayAsF64,
+    N: One + Num + Copy + Debug + DisplayAsF64 + PartialOrd,
 {
     for (row_ix, row_vec) in matrix.outer_iterator().enumerate() {
         let norm = row_vec.iter().fold(N::zero(), |acc, v| acc + *(v.1));
 
-        if norm != N::zero() && norm != N::one() {
+        let between_range = norm > N::one() - epsilon && norm < N::one() + epsilon;
+
+        if norm != N::zero() && !between_range {
             panic!(
                 "The matrix is not normalised correctly for {:#?}. Sum was: {:#?}",
                 row_ix,
@@ -189,26 +188,44 @@ where
     }
 }
 
-/// Normalises the columnss for the input (transposed) matrix in preparation
+pub fn assert_cols_normalised<N>(dense: &DenseMatrix<N>, epsilon: N)
+where
+    N: One + Num + Copy + Debug + DisplayAsF64 + PartialOrd,
+{
+    for col_ix in 0..dense.cols() {
+        let norm = (0..dense.rows()).fold(N::zero(), |acc, ix| acc + dense[[ix, col_ix]]);
+        let between_range = norm > N::one() - epsilon && norm < N::one() + epsilon;
+
+        if !between_range {
+            panic!(
+                "The matrix is not normalised correctly for column {:#?}. Sum was: {:#?}",
+                col_ix,
+                norm.to_f64()
+            );
+        }
+    }
+}
+
+/// Normalises the columns for the input (transposed) matrix in preparation
 /// for pagerank, by turning each zero-column into probability distributions.
-pub fn pagerank_normalise<N>(sparse: &SparseMatrix<N>, outbound_links_factor: N) -> SparseMatrix<N>
+pub fn pagerank_normalise<N>(sparse: &SparseMatrix<N>, outbound_links_factor: N) -> DenseMatrix<N>
 where
     N: Zero + PartialEq + Clone + Copy + Signed + PartialOrd,
 {
-    let mut matrix = sparse.to_dense();
-    let matrix_rows = matrix.rows();
+    let mut dense = sparse.to_dense();
+    let matrix_rows = dense.rows();
 
-    for col_ix in 0..matrix.cols() {
-        let norm = (0..matrix.rows()).fold(N::zero(), |acc, ix| acc + matrix[[ix, col_ix]]);
+    for col_ix in 0..dense.cols() {
+        let norm = (0..dense.rows()).fold(N::zero(), |acc, ix| acc + dense[[ix, col_ix]]);
 
         if norm == N::zero() {
             for ix in 0..matrix_rows {
-                matrix[[ix, col_ix]] = outbound_links_factor;
+                dense[[ix, col_ix]] = outbound_links_factor;
             }
         }
     }
 
-    CsMat::csr_from_dense(matrix.view(), N::zero())
+    dense
 }
 
 /// Normalises the rows for the input matrix.
@@ -272,7 +289,6 @@ where
         }
     }
 
-    println!("{}x{}", dep_adj.rows(), dep_adj.cols());
     Ok(dep_adj.to_csr())
 }
 
@@ -302,23 +318,21 @@ where
     for result in contribs_csv.into_records().filter_map(|e| e.ok()) {
         let row: ContribRow = result.deserialize(None)?;
 
-        match deps_meta
-            .project2index
-            .get(&row.project_id)
-            .and_then(|row_ix| {
-                contribs_meta
-                    .contributor2index
-                    .get(&row.contributor)
-                    .map(|col| (*row_ix, *col))
-            }) {
-            Some((row_ix, col_ix)) => {
-                contrib_adj.add_triplet(row_ix, col_ix, mk_contribution(row.contributions))
-            }
-            None => (),
+        if let Some((row_ix, col_ix)) =
+            deps_meta
+                .project2index
+                .get(&row.project_id)
+                .and_then(|row_ix| {
+                    contribs_meta
+                        .contributor2index
+                        .get(&row.contributor)
+                        .map(|col| (*row_ix, *col))
+                })
+        {
+            contrib_adj.add_triplet(row_ix, col_ix, mk_contribution(row.contributions))
         }
     }
 
-    println!("{}x{}", contrib_adj.rows(), contrib_adj.cols());
     Ok(contrib_adj.to_csr())
 }
 
@@ -343,20 +357,8 @@ where
     let contrib_t = transpose_storage(&contrib_matrix);
     let contrib_t_norm = normalise_rows(&contrib_t);
 
-    println!("assert_normalised(contrib_matrix)");
-    //assert_normalised(&normalise_rows(&contrib_matrix));
-
-    println!("assert_normalised(dep_matrix)");
-    //assert_normalised(&normalise_rows(&dep_matrix));
-
-    println!("assert_normalised(contrib_t_norm)");
-    //assert_normalised(&contrib_t_norm);
-
     let maintainer_t = maintainer_matrix.clone().transpose_into();
     let maintainer_norm = normalise_rows(&maintainer_matrix);
-
-    println!("assert_normalised(maintainer_matrix)");
-    //assert_normalised(&maintainer_norm);
 
     let project_to_project = scalar_mul_mat(
         &normalise_rows(&dep_matrix),
@@ -387,17 +389,43 @@ fn debug_sparse_matrix_to_csv<N>(matrix: &CsMat<N>, out_path: &str) -> Result<()
 where
     N: DisplayAsF64 + Zero + Clone + Copy,
 {
+    debug_dense_matrix_to_csv(&matrix.to_dense(), out_path)
+}
+
+fn debug_dense_matrix_to_csv<N>(matrix: &DenseMatrix<N>, out_path: &str) -> Result<(), AppError>
+where
+    N: DisplayAsF64 + Zero + Clone + Copy,
+{
     let mut output_csv = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(out_path)?;
 
-    for row in matrix.to_dense().genrows() {
+    for row in matrix.genrows() {
         if let Some((last, els)) = row.as_slice().and_then(|e| e.split_last()) {
             for cell in els {
                 output_csv.write_all(format!("{},", cell.to_f64()).as_str().as_bytes())?;
             }
-            output_csv.write_all(format!("{}", (*last).to_f64()).as_str().as_bytes())?;
+            output_csv.write_all(format!("{}", last.to_f64()).as_str().as_bytes())?;
+        }
+        output_csv.write_all(b"\n")?;
+    }
+
+    Ok(())
+}
+
+fn debug_pagerank_to_csv(matrix: &DenseMatrix<f64>, out_path: &str) -> Result<(), AppError> {
+    let mut output_csv = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(out_path)?;
+
+    for row in matrix.genrows() {
+        if let Some((last, els)) = row.as_slice().and_then(|e| e.split_last()) {
+            for cell in els {
+                output_csv.write_all(format!("{:.32},", cell).as_str().as_bytes())?;
+            }
+            output_csv.write_all(format!("{:.32}", last).as_str().as_bytes())?;
         }
         output_csv.write_all(b"\n")?;
     }
@@ -452,13 +480,23 @@ fn build_adjacency_matrix(
 
     println!("Assembling the dependency matrix...");
     let dep_adj_matrix = new_dependency_adjacency_matrix(&deps_meta, deps_csv)?;
+    println!(
+        "Generated a matrix of {}x{}",
+        dep_adj_matrix.rows(),
+        dep_adj_matrix.cols()
+    );
     println!("Assembling the contribution matrix...");
     let con_adj_matrix = new_contribution_adjacency_matrix(
         &deps_meta,
         &contribs_meta,
         contribs_csv,
-        Box::new(|c| c as f64),
+        Box::new(f64::from),
     )?;
+    println!(
+        "Generated a matrix of {}x{}",
+        con_adj_matrix.rows(),
+        con_adj_matrix.cols()
+    );
     let maintenance_matrix = CsMat::zero((dep_adj_matrix.rows(), con_adj_matrix.cols()));
 
     println!("Assembling the network matrix...");
@@ -470,7 +508,7 @@ fn build_adjacency_matrix(
     )?;
 
     println!("assert_normalised(network_matrix)");
-    //assert_normalised(&network_matrix);
+    assert_rows_normalised(&network_matrix, 0.0001);
 
     println!(
         "Generated a matrix of {}x{}",
@@ -478,20 +516,23 @@ fn build_adjacency_matrix(
         network_matrix.cols()
     );
 
+    let outbound_links_factor = 1.0 / f64::from(network_matrix.rows() as u32);
+
+    println!("outbound_links_factor: {:.32}", outbound_links_factor);
+
     println!("Transposing the network matrix...");
     let network_matrix_t = transpose_storage(&network_matrix);
     println!("Normalise into a probability distribution...");
-    let network_t_norm = pagerank_normalise(
-        &network_matrix_t,
-        Weight::new(1, network_matrix_t.rows() as u32).to_f64(),
-    );
+    let network_t_norm = pagerank_normalise(&network_matrix_t, outbound_links_factor);
+
+    assert_cols_normalised(&network_t_norm, 0.0001);
 
     println!("Computing the pagerank...");
-    let pagerank_matrix = pagerank_naive(&network_t_norm, 0.15, 1.0 / network_matrix.rows() as f64);
+    let pagerank_matrix = pagerank_naive(&network_t_norm, 0.15, outbound_links_factor);
 
     println!("Write the matrix to file (skipped for now)");
     // Just for fun/debug: write this as a CSV file.
-    debug_sparse_matrix_to_csv(&pagerank_matrix, "data/cargo-page-rank.csv")?;
+    debug_pagerank_to_csv(&pagerank_matrix, "data/cargo-page-rank.csv")?;
 
     Ok(())
 }
@@ -787,26 +828,23 @@ ID,MAINTAINER,REPO,CONTRIBUTIONS,NAME
 
     #[test]
     fn pagerank_naive_f64() {
-        let input = CsMat::csr_from_dense(
-            arr2(&[[0.5, 0.5, 0.], [0.5, 0., 0.], [0., 0.5, 1.0]]).view(),
-            0.0,
-        );
+        let input = arr2(&[[0.5, 0.5, 0.], [0.5, 0., 0.], [0., 0.5, 1.0]]);
         let alpha = 0.15;
         let outbound_links_factor = 1.0 / 3.0;
 
         let actual = super::pagerank_naive(&input, alpha, outbound_links_factor);
 
         let expected = arr2(&[
-            [0.18066561014263074],
+            [0.18066561014263077],
             [0.12678288431061807],
-            [0.6925515055467512],
+            [0.6925515055467511],
         ]);
 
-        assert_eq!(actual.to_dense(), expected);
+        assert_eq!(actual, expected);
     }
 
     #[test]
-    fn pagerank_normalise_mut_works() {
+    fn pagerank_normalise_works() {
         let z = Weight::zero();
         let o = Weight::one();
         let input = CsMat::csr_from_dense(
@@ -835,6 +873,6 @@ ID,MAINTAINER,REPO,CONTRIBUTIONS,NAME
             [Weight::new(1, 3), Weight::new(1, 2), z],
         ]);
 
-        assert_eq!(actual.to_dense(), expected);
+        assert_eq!(actual, expected);
     }
 }
