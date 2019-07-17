@@ -13,7 +13,7 @@ use ndarray::Array2;
 use ndarray_linalg::solve::Inverse;
 use osrank::types::{HyperParams, Weight};
 use serde::Deserialize;
-use sprs::binop::scalar_mul_mat;
+use sprs::binop::{add_mat_same_storage, scalar_mul_mat};
 use sprs::{hstack, vstack, CsMat, TriMat, TriMatBase};
 
 use core::fmt::Debug;
@@ -173,6 +173,43 @@ pub fn pagerank_naive(
     );
 
     scalar_mul_mat(&(&m1 * &e_matrix), prop_teleporting).to_dense()
+}
+
+// Iterative algorithm taken from
+// https://en.wikipedia.org/wiki/PageRank#Simplified_algorithm
+pub fn pagerank_naive_iterative(
+    dense: &DenseMatrix<f64>,
+    damping_factor: f64,
+    outbound_links_factor: f64,
+) -> DenseMatrix<f64> {
+    let prop_teleporting = 1.0 - damping_factor;
+
+    let m = CsMat::csr_from_dense(dense.view(), 0.0);
+
+    // At t = 0, the rank for all the nodes is the same.
+    let mut rank = CsMat::csr_from_dense(
+        (outbound_links_factor * Array2::ones((m.rows(), 1))).view(),
+        0.0,
+    );
+
+    let e = CsMat::csr_from_dense(
+        ((prop_teleporting / m.rows() as f64) * Array2::ones((m.rows(), 1))).view(),
+        0.0,
+    );
+
+    let mut previous_rank = rank.clone();
+
+    for _ix in 0..100 {
+        rank = add_mat_same_storage(&scalar_mul_mat(&(&m * &rank), damping_factor), &e);
+
+        if previous_rank == rank {
+            break;
+        }
+
+        previous_rank = rank.clone()
+    }
+
+    rank.to_dense()
 }
 
 pub fn assert_rows_normalised<N>(matrix: &CsMat<N>, epsilon: N)
@@ -534,7 +571,7 @@ fn build_adjacency_matrix(
     assert_cols_normalised(&network_t_norm, 0.0001);
 
     println!("Computing the pagerank...");
-    let pagerank_matrix = pagerank_naive(&network_t_norm, 0.15, outbound_links_factor);
+    let pagerank_matrix = pagerank_naive_iterative(&network_t_norm, 0.85, outbound_links_factor);
 
     println!("Write the matrix to file (skipped for now)");
     // Just for fun/debug: write this as a CSV file.
@@ -844,6 +881,23 @@ ID,MAINTAINER,REPO,CONTRIBUTIONS,NAME
             [0.18066561014263074],
             [0.12678288431061807],
             [0.6925515055467512],
+        ]);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn pagerank_naive_iterative_f64() {
+        let input = arr2(&[[0.5, 0.5, 0.], [0.5, 0., 0.], [0., 0.5, 1.0]]);
+        let alpha = 0.85;
+        let outbound_links_factor = 1.0 / 3.0;
+
+        let actual = super::pagerank_naive_iterative(&input, alpha, outbound_links_factor);
+
+        let expected = arr2(&[
+            [0.18066561014263083],
+            [0.1267828843106181],
+            [0.6925515055467515],
         ]);
 
         assert_eq!(actual, expected);
