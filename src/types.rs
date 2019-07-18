@@ -207,6 +207,24 @@ impl Default for HyperParams {
     }
 }
 
+/// The damping factors for project and accounts
+
+pub struct DampingFactors {
+    pub project: f64,
+    pub account: f64,
+}
+
+/// The default for the damping factors in other ranks.
+/// The whitepaper did not suggest values for the damping factors.
+impl Default for DampingFactors {
+    fn default() -> Self {
+        DampingFactors {
+            project: 0.85,
+            account: 0.85,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum Dependency {
     Contrib(Weight),

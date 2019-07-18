@@ -7,7 +7,7 @@ extern crate petgraph;
 use rand::Rng;
 use rand::seq::SliceRandom;
 use std::iter::FromIterator;
-use crate::types::{Network, RandomWalks, RandomWalk, SeedSet, Artifact, ProjectAttributes, Dependency, Weight, Osrank};
+use crate::types::{Network, RandomWalks, RandomWalk, SeedSet, Artifact, ProjectAttributes, Dependency, Weight, Osrank, DampingFactors};
 use petgraph::visit::EdgeRef;
 
 #[derive(Debug)]
@@ -37,6 +37,7 @@ pub struct WalkResult {
 pub fn random_walk(
     seed_set: Option<SeedSet>,
     network: &NetworkView,
+    damping_factors: DampingFactors,
 ) -> Result<WalkResult, OsrankError> {
     match seed_set {
         Some(_) => unimplemented!(),
@@ -48,9 +49,9 @@ pub fn random_walk(
                     let mut walk = RandomWalk::new();
                     walk.add_next(i);
                     let mut current_node = i;
-                    // TODO use damping factor variables, distinguish account/project
+                    // TODO distinguish account/project
                     // TODO Should there be a safeguard so this doesn't run forever?
-                    while rand::thread_rng().gen::<f64>() < 0.85 {
+                    while rand::thread_rng().gen::<f64>() < damping_factors.project {
                         // TODO choose next node with edge weights
                         let neighbors = Vec::from_iter(network.from_graph.edges(current_node));
                         if neighbors.len() as i32 == 0 {
@@ -146,6 +147,6 @@ fn everything_ok() {
     network.unsafe_add_dependency(5,2,Dependency::Depend(Weight::new(1, 1)));
 
     assert_eq!(network.from_graph.edge_count(), 11);
-    let walked = random_walk(None, &network).unwrap();
+    let walked = random_walk(None, &network, DampingFactors::default()).unwrap();
     assert_eq!(rank_network(&walked.walks, &mut network).unwrap(),());
 }
