@@ -7,7 +7,7 @@ extern crate petgraph;
 use rand::Rng;
 use rand::seq::SliceRandom;
 use std::iter::FromIterator;
-use crate::types::{Network, RandomWalks, RandomWalk, SeedSet, Artifact, ProjectAttributes, Dependency, Weight};
+use crate::types::{Network, RandomWalks, RandomWalk, SeedSet, Artifact, ProjectAttributes, Dependency, Weight, Osrank};
 use petgraph::visit::EdgeRef;
 
 #[derive(Debug)]
@@ -44,7 +44,7 @@ pub fn random_walk(
             let mut walks = RandomWalks::new();
             for i in network.from_graph.node_indices() {
                 // TODO(mb) number of iterations must be a variable
-                for _ in 0..1000 {
+                for _ in 0..100 {
                     let mut walk = RandomWalk::new();
                     walk.add_next(i);
                     let mut current_node = i;
@@ -92,9 +92,10 @@ pub fn rank_network(
     for node_idx in network_view.from_graph.node_indices() {
         let total_walks = random_walks.len();
         let node_visits = &random_walks.count_visits(node_idx);
-        let rank = (*node_visits as f64 * 0.85) / (total_walks * network_view.from_graph.node_indices().count()) as f64;
-        println!("counted {:?} for idx {:?}, its rank is: {:?}", &node_visits, &node_idx, &rank);
+        let rank = Osrank::new(*node_visits as u32, (total_walks * network_view.from_graph.node_indices().count()) as u32);
+        network_view.from_graph[node_idx].set_osrank(Some(rank)) ;
     }
+    network_view.print_artifacts();
     Ok(())
 }
 

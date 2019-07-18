@@ -10,7 +10,7 @@ use num_traits::{Num, One, Signed, Zero};
 use petgraph::graph::NodeIndex;
 use petgraph::{Directed, Graph};
 
-type Osrank = Fraction;
+pub type Osrank = Fraction;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct RandomWalks {
@@ -246,11 +246,21 @@ pub enum Artifact {
     Account(AccountAttributes),
 }
 
+impl Artifact {
+    // Set the osrank attribute of the Artifact
+    pub fn set_osrank(&mut self, rank: Option<Osrank>) {
+        match self {
+            Artifact::Project(attrs) => attrs.osrank = rank,
+            Artifact::Account(attrs) => attrs.osrank = rank,
+        }
+    }
+}
+
 impl fmt::Display for Artifact {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self {
-            Artifact::Project(ref attrs) => write!(f, "{}", attrs.id),
-            Artifact::Account(ref attrs) => write!(f, "{}", attrs.id),
+            Artifact::Project(ref attrs) => write!(f, "id: {} osrank: {:.5}", attrs.id, attrs.osrank.unwrap()),
+            Artifact::Account(ref attrs) => write!(f, "id: {} osrank: {:.5}", attrs.id, attrs.osrank.unwrap()),
         }
     }
 }
@@ -276,5 +286,12 @@ impl Network {
             self.from_graph
                 .add_edge(NodeIndex::from(source), NodeIndex::from(target), dependency);
         ()
+    }
+
+    // So far only for debugging. Prints all artifacts with their ids and osranks
+    pub fn print_artifacts(&self) {
+        for arti in self.from_graph.raw_nodes().into_iter().map(|node| &node.weight) {
+            println!("{}", arti);
+        }
     }
 }
