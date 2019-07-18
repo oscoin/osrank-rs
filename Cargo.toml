@@ -44,6 +44,7 @@ failure_derive = "0.1.5"
 either = "^1.5"
 num-traits = "^0.2"
 derive_more = "^0.13"
+itertools = "^0.8.0"
 
 #Linear algebra/math crates
 petgraph = "0.4.13"
