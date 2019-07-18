@@ -2,6 +2,7 @@
 extern crate derive_more;
 
 pub mod algorithm;
+pub mod collections;
 pub mod exporters;
 pub mod importers;
 pub mod types;

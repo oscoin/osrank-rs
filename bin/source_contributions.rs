@@ -179,7 +179,7 @@ where
     }
 }
 
-fn deserialise_project<'a>(sr: &'a StringRecord) -> Option<Project<'a>> {
+fn deserialise_project(sr: &StringRecord) -> Option<Project> {
     if let Some(Ok(pid)) = sr.get(0).map(|s: &str| s.parse::<u32>()) {
         let platform = sr.get(1);
         let project_name = sr.get(2);
@@ -241,7 +241,7 @@ fn source_contributors(
 
     //Write the header (if we are not resuming)
     if resume_from.is_none() {
-        contributions.write(b"ID,MAINTAINER,REPO,CONTRIBUTIONS,NAME\n")?;
+        contributions.write_all(b"ID,MAINTAINER,REPO,CONTRIBUTIONS,NAME\n")?;
     }
 
     for result in rdr
@@ -316,7 +316,7 @@ fn extract_contribution(
                         let stats_len = stats.len();
                         for contribution in stats {
                             if is_maintainer(&owner, &contribution, stats_len) {
-                                contributions.write(
+                                contributions.write_all(
                                     format!(
                                         "{},github@{},{},{},{}\n",
                                         project.id,
