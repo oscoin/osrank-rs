@@ -1,8 +1,14 @@
 extern crate either;
 extern crate ndarray;
 extern crate sprs;
+extern crate rand;
+extern crate petgraph;
 
+use rand::Rng;
+use rand::seq::SliceRandom;
+use std::iter::FromIterator;
 use crate::types::{Network, RandomWalks, RandomWalk, SeedSet, Artifact, ProjectAttributes, Dependency, Weight};
+use petgraph::visit::EdgeRef;
 
 #[derive(Debug)]
 pub enum OsrankError {}
@@ -32,40 +38,40 @@ pub fn random_walk(
     seed_set: Option<SeedSet>,
     network: &NetworkView,
 ) -> Result<WalkResult, OsrankError> {
-    unimplemented!()
-}
-
-pub fn random_walk_no_seed(
-    network: &NetworkView,
-) -> Result<WalkResult, OsrankError> {
-    let mut walks = RandomWalks::new();
-    for i in network.from_graph.node_indices() {
-        // TODO(mb) number of iterations must be a variable
-        for j in 0..4 {
-            let mut walk = RandomWalk::new();
-            walk.add_next(i);
-            let mut current_node = i;
-            // TODO number of steps for now has to be replaced by damping factor termination
-            for t in 0..4 {
-                // TODO choose next node at random
-                match network.from_graph.neighbors(current_node).nth(0) {
-                    Some(node_idx) => {
-                        walk.add_next(node_idx);
-                        current_node = node_idx
-                    },
-                    _ => break
+    match seed_set {
+        Some(_) => unimplemented!(),
+        None => {
+            let mut walks = RandomWalks::new();
+            for i in network.from_graph.node_indices() {
+                // TODO(mb) number of iterations must be a variable
+                for _ in 0..1000 {
+                    let mut walk = RandomWalk::new();
+                    walk.add_next(i);
+                    let mut current_node = i;
+                    // TODO use damping factor variables, distinguish account/project
+                    // TODO Should there be a safeguard so this doesn't run forever?
+                    while rand::thread_rng().gen::<f64>() < 0.85 {
+                        // TODO choose next node with edge weights
+                        let neighbors = Vec::from_iter(network.from_graph.edges(current_node));
+                        if neighbors.len() as i32 == 0 {
+                            break
+                        } else {
+                            let next_edge = neighbors.choose(&mut rand::thread_rng()).unwrap();
+                            walk.add_next(next_edge.target());
+                            current_node = next_edge.target();
+                        }
+                    }
+                    walks.add_walk(walk);
                 }
             }
-            walks.add_walk(walk);
+            // TODO return actual NetworkView
+            let res = WalkResult {
+                network_view: NetworkView::default(),
+                walks: walks,
+            };
+            Ok(res)
         }
     }
-    // TODO return actual NetworkView
-    let res = WalkResult {
-        network_view: NetworkView::default(),
-        walks: walks,
-    };
-    println!("{:?}", &res.walks);
-    Ok(res)
 }
 
 /// Naive version of the algorithm that given a full Network and a precomputed
@@ -84,8 +90,10 @@ pub fn rank_network(
     network_view: &mut NetworkView,
 ) -> Result<(), OsrankError> {
     for node_idx in network_view.from_graph.node_indices() {
-        let node_visits = random_walks.count_visits(node_idx);
-        println!("counted {:?} for idx {:?}", node_visits, &node_idx);
+        let total_walks = random_walks.len();
+        let node_visits = &random_walks.count_visits(node_idx);
+        let rank = (*node_visits as f64 * 0.85) / (total_walks * network_view.from_graph.node_indices().count()) as f64;
+        println!("counted {:?} for idx {:?}, its rank is: {:?}", &node_visits, &node_idx, &rank);
     }
     Ok(())
 }
@@ -137,7 +145,6 @@ fn everything_ok() {
     network.unsafe_add_dependency(5,2,Dependency::Depend(Weight::new(1, 1)));
 
     assert_eq!(network.from_graph.edge_count(), 11);
-    let mut walked = random_walk_no_seed(&network).unwrap();
+    let walked = random_walk(None, &network).unwrap();
     assert_eq!(rank_network(&walked.walks, &mut network).unwrap(),());
-    assert_eq!(walked.walks.len(), 4*6);
 }

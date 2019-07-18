@@ -2,7 +2,6 @@ extern crate fraction;
 extern crate num_traits;
 extern crate petgraph;
 
-use std::collections::HashSet;
 use std::fmt;
 use std::ops::{Div, Mul, Rem};
 
@@ -29,7 +28,7 @@ impl RandomWalks {
         self.random_walks_internal.push(walk);
     }
 
-    pub fn len(self) -> usize {
+    pub fn len(&self) -> usize {
         self.random_walks_internal.len()
     }
 
