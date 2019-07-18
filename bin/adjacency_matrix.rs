@@ -9,8 +9,10 @@ extern crate sprs;
 
 use clap::{App, Arg};
 use failure::Fail;
+use itertools::Itertools;
 use ndarray::Array2;
 use ndarray_linalg::solve::Inverse;
+use osrank::collections::{Rank, WithLabels};
 use osrank::types::{HyperParams, Weight};
 use serde::Deserialize;
 use sprs::binop::{add_mat_same_storage, scalar_mul_mat};
@@ -91,7 +93,7 @@ struct DepMetaRow {
 
 struct DependenciesMetadata {
     ids: HashSet<ProjectId>,
-    labels: HashSet<ProjectName>,
+    labels: Vec<ProjectName>,
     project2index: HashMap<ProjectId, LocalMatrixIndex>,
 }
 
@@ -457,20 +459,21 @@ where
     Ok(())
 }
 
-fn debug_pagerank_to_csv(matrix: &DenseMatrix<f64>, out_path: &str) -> Result<(), AppError> {
+fn debug_pagerank_to_csv(rank: &Rank<f64>, out_path: &str) -> Result<(), AppError> {
     let mut output_csv = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(out_path)?;
 
-    for row in matrix.genrows() {
-        if let Some((last, els)) = row.as_slice().and_then(|e| e.split_last()) {
-            for cell in els {
-                output_csv.write_all(format!("{:.32},", cell).as_str().as_bytes())?;
-            }
-            output_csv.write_all(format!("{:.32}", last).as_str().as_bytes())?;
-        }
-        output_csv.write_all(b"\n")?;
+    for (project_name, pagerank) in rank
+        .into_iter()
+        .sorted_by(|(_, v1), (_, v2)| v2.partial_cmp(v1).unwrap())
+    {
+        output_csv.write_all(
+            format!("{} {:.32}\n", project_name, pagerank)
+                .as_str()
+                .as_bytes(),
+        )?;
     }
 
     Ok(())
@@ -496,7 +499,7 @@ fn build_adjacency_matrix(
     for result in deps_meta_csv.into_records().filter_map(|e| e.ok()) {
         let row: DepMetaRow = result.deserialize(None)?;
         deps_meta.ids.insert(row.id);
-        deps_meta.labels.insert(row.name);
+        deps_meta.labels.push(row.name);
         deps_meta
             .project2index
             .insert(row.id, deps_meta.ids.len() - 1);
@@ -573,9 +576,23 @@ fn build_adjacency_matrix(
     println!("Computing the pagerank...");
     let pagerank_matrix = pagerank_naive_iterative(&network_t_norm, 0.85, outbound_links_factor);
 
+    let pagerank_matrix_labeled = Rank::from(
+        pagerank_matrix.labeled((
+            deps_meta
+                .labels
+                .iter()
+                .cloned()
+                .collect::<Vec<String>>()
+                .as_slice(),
+            &[],
+        )),
+    )
+    .unwrap_or_else(|e| panic!(e));
+
     println!("Write the matrix to file (skipped for now)");
+
     // Just for fun/debug: write this as a CSV file.
-    debug_pagerank_to_csv(&pagerank_matrix, "data/cargo-page-rank.csv")?;
+    debug_pagerank_to_csv(&pagerank_matrix_labeled, "data/cargo-page-rank.csv")?;
 
     Ok(())
 }
