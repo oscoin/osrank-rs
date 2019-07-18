@@ -50,8 +50,8 @@ fn source_dependencies(path: &str, platform: &str) -> Result<(), Box<dyn Error>>
     let mut unique_dependencies: UniqueDependencies = HashSet::new();
 
     //Write the header(s)
-    dependencies.write(b"FROM_ID,TO_ID\n")?;
-    dependencies_meta.write(b"ID,NAME,PLATFORM\n")?;
+    dependencies.write_all(b"FROM_ID,TO_ID\n")?;
+    dependencies_meta.write_all(b"ID,NAME,PLATFORM\n")?;
 
     for result in rdr
         .records()
@@ -79,9 +79,13 @@ fn extract_dependency(
     match dependency.dependency_project_id {
         None => (),
         Some(pid) => {
-            if let None = unique_dependencies.get(&(dependency.project_id, pid)) {
+            if unique_dependencies
+                .get(&(dependency.project_id, pid))
+                .is_none()
+            {
                 unique_dependencies.insert((dependency.project_id, pid));
-                dependencies.write(format!("{},{}\n", dependency.project_id, pid).as_bytes())?;
+                dependencies
+                    .write_all(format!("{},{}\n", dependency.project_id, pid).as_bytes())?;
             }
         }
     }
@@ -97,9 +101,9 @@ fn extract_metadata(
 ) -> Result<(), Box<dyn Error>> {
     // Remember if we visited this project before, so that we write only
     // unique meta information to the file.
-    if let None = unique_projects.get(&dependency.project_id) {
+    if unique_projects.get(&dependency.project_id).is_none() {
         unique_projects.insert(dependency.project_id);
-        dependencies_meta.write(
+        dependencies_meta.write_all(
             format!(
                 "{},{},{}\n",
                 dependency.project_id, dependency.project_name, platform
@@ -119,20 +123,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() != 3 {
-        writeln!(
-            std::io::stderr(),
-            "Usage: {} <PATH-TO-CSV-FILE> <PLATFORM>",
-            &args[0]
-        )
-        .unwrap();
-        writeln!(
-            std::io::stderr(),
+        eprintln!("Usage: {} <PATH-TO-CSV-FILE> <PLATFORM>", &args[0]);
+        eprintln!(
             r#"Example: {} ~/Downloads/Libraries.io-open-data-1.4.0.tar.gz 
             ~/Downloads/libraries-1.4.0-2018-12-22/dependencies-1.4.0-2018-12-22.csv
             Cargo"#,
             &args[0]
-        )
-        .unwrap();
+        );
     }
 
     // Read the path to the file from the args
