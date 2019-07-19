@@ -10,6 +10,7 @@ use rand::seq::SliceRandom;
 use std::iter::FromIterator;
 use crate::types::{Network, RandomWalks, RandomWalk, SeedSet, Artifact, ProjectAttributes, Dependency, Weight, Osrank, DampingFactors};
 use petgraph::visit::EdgeRef;
+use fraction::Fraction;
 
 #[derive(Debug)]
 pub enum OsrankError {}
@@ -39,6 +40,7 @@ pub fn random_walk(
     seed_set: Option<SeedSet>,
     network: &NetworkView,
     damping_factors: DampingFactors,
+    iter: i32,
 ) -> Result<WalkResult, OsrankError> {
     match seed_set {
         Some(_) => unimplemented!(),
@@ -46,7 +48,7 @@ pub fn random_walk(
             let mut walks = RandomWalks::new();
             for i in network.from_graph.node_indices() {
                 // TODO(mb) number of iterations must be a variable
-                for _ in 0..1000 {
+                for _ in 0..iter {
                     let mut walk = RandomWalk::new();
                     walk.add_next(i);
                     let mut current_node = i;
@@ -90,11 +92,12 @@ pub fn random_walk(
 pub fn rank_network(
     random_walks: &RandomWalks,
     network_view: &mut NetworkView,
+    damping_factors: DampingFactors,
 ) -> Result<(), OsrankError> {
     for node_idx in network_view.from_graph.node_indices() {
         let total_walks = random_walks.len();
         let node_visits = &random_walks.count_visits(node_idx);
-        let rank = Osrank::new(*node_visits as u32, (total_walks * network_view.from_graph.node_indices().count()) as u32);
+        let rank = Fraction::from(damping_factors.project) * Osrank::new(*node_visits as u32, (total_walks * network_view.from_graph.node_indices().count()) as u32);
         network_view.from_graph[node_idx].set_osrank(Some(rank)) ;
     }
     Ok(())
@@ -147,6 +150,6 @@ fn everything_ok() {
     network.unsafe_add_dependency(5,2,Dependency::Depend(Weight::new(1, 1)));
 
     assert_eq!(network.from_graph.edge_count(), 11);
-    let walked = random_walk(None, &network, DampingFactors::default()).unwrap();
-    assert_eq!(rank_network(&walked.walks, &mut network).unwrap(),());
+    let walked = random_walk(None, &network, DampingFactors::default(), 10).unwrap();
+    assert_eq!(rank_network(&walked.walks, &mut network, DampingFactors::default()).unwrap(),());
 }
