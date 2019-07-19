@@ -12,7 +12,7 @@ use petgraph::{Directed, Graph};
 
 pub type Osrank = Fraction;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct RandomWalks {
     random_walks_internal: Vec<RandomWalk>,
 }
@@ -37,7 +37,7 @@ impl RandomWalks {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, PartialEq, Eq, Hash)]
 pub struct RandomWalk {
     random_walk_internal: Vec<NodeIndex>,
 }
@@ -265,8 +265,8 @@ pub struct ProjectAttributes {
 
 #[derive(Debug, PartialOrd, Eq, PartialEq)]
 pub struct AccountAttributes {
-    id: String,
-    osrank: Option<Osrank>,
+    pub id: String,
+    pub osrank: Option<Osrank>,
 }
 
 #[derive(Debug, PartialOrd, PartialEq, Eq)]
