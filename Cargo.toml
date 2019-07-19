@@ -51,6 +51,7 @@ petgraph = "0.4.13"
 fraction = "0.6"
 sprs = "^0.6"
 ndarray = "=0.12.1"
+rand = "^0.6.5"
 
 
 # Binary-only dependencies
