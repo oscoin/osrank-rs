@@ -1,10 +1,9 @@
 #![allow(unknown_lints)]
-#![warn(clippy)]
-use ndarray::{Array2, ArrayBase, ArrayView1, ArrayViewMut1, ViewRepr};
+#![warn(clippy::all)]
+use ndarray::Array2;
 use sprs::CsMat;
 
 use core::iter::IntoIterator;
-use std::collections::hash_map::Values;
 use std::collections::HashMap;
 
 /// A wrapper that allows labeling data structures (in particular, array and

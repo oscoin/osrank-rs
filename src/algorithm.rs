@@ -1,16 +1,17 @@
 extern crate either;
 extern crate ndarray;
-extern crate sprs;
-extern crate rand;
 extern crate petgraph;
+extern crate rand;
+extern crate sprs;
 
-use rand::Rng;
+use crate::protocol_traits::ledger::LedgerView;
+use crate::types::{Network, Osrank, RandomWalk, RandomWalks, SeedSet};
+use fraction::Fraction;
+use petgraph::visit::EdgeRef;
 use rand::distributions::WeightedError;
 use rand::seq::SliceRandom;
+use rand::Rng;
 use std::iter::FromIterator;
-use crate::types::{Network, RandomWalks, RandomWalk, SeedSet, Osrank, DampingFactors};
-use petgraph::visit::EdgeRef;
-use fraction::Fraction;
 
 #[derive(Debug)]
 pub enum OsrankError {}
@@ -36,12 +37,15 @@ pub struct WalkResult {
     walks: RandomWalks,
 }
 
-pub fn random_walk(
+pub fn random_walk<L>(
     seed_set: Option<SeedSet>,
     network: &NetworkView,
-    damping_factors: DampingFactors,
+    ledger_view: &L,
     iter: i32,
-) -> Result<WalkResult, OsrankError> {
+) -> Result<WalkResult, OsrankError>
+where
+    L: LedgerView,
+{
     match seed_set {
         Some(_) => unimplemented!(),
         None => {
@@ -53,13 +57,17 @@ pub fn random_walk(
                     let mut current_node = i;
                     // TODO distinguish account/project
                     // TODO Should there be a safeguard so this doesn't run forever?
-                    while rand::thread_rng().gen::<f64>() < damping_factors.project {
+                    while rand::thread_rng().gen::<f64>()
+                        < ledger_view.get_damping_factors().project
+                    {
                         let neighbors = Vec::from_iter(network.from_graph.edges(current_node));
-                        match neighbors.choose_weighted(&mut rand::thread_rng(), |item| item.weight().get_weight().as_f64().unwrap()) {
+                        match neighbors.choose_weighted(&mut rand::thread_rng(), |item| {
+                            item.weight().get_weight().as_f64().unwrap()
+                        }) {
                             Ok(next_edge) => {
                                 walk.add_next(next_edge.target());
                                 current_node = next_edge.target();
-                            },
+                            }
                             Err(WeightedError::NoItem) => break,
                             Err(error) => panic!("Problem with the neighbors: {:?}", error),
                         }
@@ -88,23 +96,34 @@ pub fn random_walk(
 //     rank_network(&phase2.walks, &mut phase2.network_view)
 // }
 
-pub fn rank_network(
+pub fn rank_network<L>(
     random_walks: &RandomWalks,
     network_view: &mut NetworkView,
-    damping_factors: DampingFactors,
-) -> Result<(), OsrankError> {
+    ledger_view: &L,
+) -> Result<(), OsrankError>
+where
+    L: LedgerView,
+{
     for node_idx in network_view.from_graph.node_indices() {
         let total_walks = random_walks.len();
         let node_visits = &random_walks.count_visits(node_idx);
-        let rank = Fraction::from(damping_factors.project) * Osrank::new(*node_visits as u32, (total_walks * network_view.from_graph.node_indices().count()) as u32);
-        network_view.from_graph[node_idx].set_osrank(Some(rank)) ;
+        let rank = Fraction::from(ledger_view.get_damping_factors().project)
+            * Osrank::new(
+                *node_visits as u32,
+                (total_walks * network_view.from_graph.node_indices().count()) as u32,
+            );
+        network_view.from_graph[node_idx].set_osrank(Some(rank));
     }
     Ok(())
 }
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Artifact, ProjectAttributes, AccountAttributes, Dependency, Weight};
+    use crate::protocol_traits::ledger::MockLedger;
+    use crate::types::{
+        AccountAttributes, Artifact, DampingFactors, Dependency, HyperParams, ProjectAttributes,
+        Weight,
+    };
 
     #[test]
     fn everything_ok() {
@@ -140,20 +159,28 @@ mod tests {
         network.add_artifact(a1);
         network.add_artifact(a2);
         network.add_artifact(a3);
-        network.unsafe_add_dependency(0,3,Dependency::Depend(Weight::new(3, 7)));
-        network.unsafe_add_dependency(3,0,Dependency::Depend(Weight::new(1, 1)));
-        network.unsafe_add_dependency(0,1,Dependency::Depend(Weight::new(4, 7)));
-        network.unsafe_add_dependency(1,4,Dependency::Depend(Weight::new(1, 1)));
-        network.unsafe_add_dependency(4,1,Dependency::Depend(Weight::new(1, 3)));
-        network.unsafe_add_dependency(4,2,Dependency::Depend(Weight::new(2, 3)));
-        network.unsafe_add_dependency(2,4,Dependency::Depend(Weight::new(11, 28)));
-        network.unsafe_add_dependency(2,5,Dependency::Depend(Weight::new(1, 28)));
-        network.unsafe_add_dependency(2,0,Dependency::Depend(Weight::new(2, 7)));
-        network.unsafe_add_dependency(2,1,Dependency::Depend(Weight::new(2, 7)));
-        network.unsafe_add_dependency(5,2,Dependency::Depend(Weight::new(1, 1)));
+        network.unsafe_add_dependency(0, 3, Dependency::Depend(Weight::new(3, 7)));
+        network.unsafe_add_dependency(3, 0, Dependency::Depend(Weight::new(1, 1)));
+        network.unsafe_add_dependency(0, 1, Dependency::Depend(Weight::new(4, 7)));
+        network.unsafe_add_dependency(1, 4, Dependency::Depend(Weight::new(1, 1)));
+        network.unsafe_add_dependency(4, 1, Dependency::Depend(Weight::new(1, 3)));
+        network.unsafe_add_dependency(4, 2, Dependency::Depend(Weight::new(2, 3)));
+        network.unsafe_add_dependency(2, 4, Dependency::Depend(Weight::new(11, 28)));
+        network.unsafe_add_dependency(2, 5, Dependency::Depend(Weight::new(1, 28)));
+        network.unsafe_add_dependency(2, 0, Dependency::Depend(Weight::new(2, 7)));
+        network.unsafe_add_dependency(2, 1, Dependency::Depend(Weight::new(2, 7)));
+        network.unsafe_add_dependency(5, 2, Dependency::Depend(Weight::new(1, 1)));
+
+        let mock_ledger = MockLedger {
+            params: HyperParams::default(),
+            factors: DampingFactors::default(),
+        };
 
         assert_eq!(network.from_graph.edge_count(), 11);
-        let walked = random_walk(None, &network, DampingFactors::default(), 10).unwrap();
-        assert_eq!(rank_network(&walked.walks, &mut network, DampingFactors::default()).unwrap(),());
+        let walked = random_walk(None, &network, &mock_ledger, 10).unwrap();
+        assert_eq!(
+            rank_network(&walked.walks, &mut network, &mock_ledger).unwrap(),
+            ()
+        );
     }
 }
