@@ -47,7 +47,6 @@ pub fn random_walk(
         None => {
             let mut walks = RandomWalks::new();
             for i in network.from_graph.node_indices() {
-                // TODO(mb) number of iterations must be a variable
                 for _ in 0..iter {
                     let mut walk = RandomWalk::new();
                     walk.add_next(i);
@@ -71,7 +70,7 @@ pub fn random_walk(
             // TODO return actual NetworkView
             let res = WalkResult {
                 network_view: NetworkView::default(),
-                walks: walks,
+                walks,
             };
             Ok(res)
         }

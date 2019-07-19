@@ -304,7 +304,6 @@ impl Network {
     /// Adds an Artifact to the Network.
     pub fn add_artifact(&mut self, artifact: Artifact) {
         let _ = self.from_graph.add_node(artifact);
-        ()
     }
 
     /// Adds a Dependency to the Network. It's unsafe in the sense it's
@@ -314,12 +313,11 @@ impl Network {
         let _ =
             self.from_graph
                 .add_edge(NodeIndex::from(source), NodeIndex::from(target), dependency);
-        ()
     }
 
     // So far only for debugging. Prints all artifacts with their ids and osranks
     pub fn print_artifacts(&self) {
-        for arti in self.from_graph.raw_nodes().into_iter().map(|node| &node.weight) {
+        for arti in self.from_graph.raw_nodes().iter().map(|node| &node.weight) {
             println!("{}", arti);
         }
     }
