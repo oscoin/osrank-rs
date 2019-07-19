@@ -5,6 +5,7 @@ extern crate rand;
 extern crate petgraph;
 
 use rand::Rng;
+use rand::distributions::WeightedError;
 use rand::seq::SliceRandom;
 use std::iter::FromIterator;
 use crate::types::{Network, RandomWalks, RandomWalk, SeedSet, Artifact, ProjectAttributes, Dependency, Weight, Osrank, DampingFactors};
@@ -45,21 +46,21 @@ pub fn random_walk(
             let mut walks = RandomWalks::new();
             for i in network.from_graph.node_indices() {
                 // TODO(mb) number of iterations must be a variable
-                for _ in 0..100 {
+                for _ in 0..1000 {
                     let mut walk = RandomWalk::new();
                     walk.add_next(i);
                     let mut current_node = i;
                     // TODO distinguish account/project
                     // TODO Should there be a safeguard so this doesn't run forever?
                     while rand::thread_rng().gen::<f64>() < damping_factors.project {
-                        // TODO choose next node with edge weights
                         let neighbors = Vec::from_iter(network.from_graph.edges(current_node));
-                        if neighbors.len() as i32 == 0 {
-                            break
-                        } else {
-                            let next_edge = neighbors.choose(&mut rand::thread_rng()).unwrap();
-                            walk.add_next(next_edge.target());
-                            current_node = next_edge.target();
+                        match neighbors.choose_weighted(&mut rand::thread_rng(), |item| item.weight().get_weight().as_f64().unwrap()) {
+                            Ok(next_edge) => {
+                                walk.add_next(next_edge.target());
+                                current_node = next_edge.target();
+                            },
+                            Err(WeightedError::NoItem) => break,
+                            Err(error) => panic!("Problem with the neighbors: {:?}", error),
                         }
                     }
                     walks.add_walk(walk);
@@ -96,7 +97,6 @@ pub fn rank_network(
         let rank = Osrank::new(*node_visits as u32, (total_walks * network_view.from_graph.node_indices().count()) as u32);
         network_view.from_graph[node_idx].set_osrank(Some(rank)) ;
     }
-    network_view.print_artifacts();
     Ok(())
 }
 

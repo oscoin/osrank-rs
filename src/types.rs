@@ -208,7 +208,6 @@ impl Default for HyperParams {
 }
 
 /// The damping factors for project and accounts
-
 pub struct DampingFactors {
     pub project: f64,
     pub account: f64,
@@ -242,6 +241,18 @@ impl fmt::Display for Dependency {
             Dependency::Maintain(ref w) => write!(f, "{:.5}", w.get_weight),
             Dependency::MaintainPrime(ref w) => write!(f, "{:.5}", w.get_weight),
             Dependency::Depend(ref w) => write!(f, "{:.5}", w.get_weight),
+        }
+    }
+}
+
+impl  Dependency {
+    pub fn get_weight(&self) -> &Weight {
+        match self {
+            Dependency::Contrib(ref w) => w,
+            Dependency::ContribPrime(ref w) => w,
+            Dependency::Maintain(ref w) => w,
+            Dependency::MaintainPrime(ref w) => w,
+            Dependency::Depend(ref w) => w,
         }
     }
 }
