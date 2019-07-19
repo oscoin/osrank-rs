@@ -2,7 +2,6 @@ extern crate fraction;
 extern crate num_traits;
 extern crate petgraph;
 
-use std::collections::HashSet;
 use std::fmt;
 use std::ops::{Div, Mul, Rem};
 
@@ -11,14 +10,52 @@ use num_traits::{Num, One, Signed, Zero};
 use petgraph::graph::NodeIndex;
 use petgraph::{Directed, Graph};
 
-type Osrank = Fraction;
+pub type Osrank = Fraction;
 
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct RandomWalks {
-    random_walks_internal: HashSet<RandomWalk>,
+    random_walks_internal: Vec<RandomWalk>,
 }
 
+impl RandomWalks {
+    pub fn new() -> Self {
+        RandomWalks {
+            random_walks_internal: Vec::new(),
+        }
+    }
+
+    pub fn add_walk(&mut self, walk: RandomWalk) {
+        self.random_walks_internal.push(walk);
+    }
+
+    pub fn len(&self) -> usize {
+        self.random_walks_internal.len()
+    }
+
+    pub fn count_visits(&self, idx: NodeIndex) -> usize {
+        self.random_walks_internal.iter().map(|rw| rw.count_visits(&idx)).sum()
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq, Hash)]
 pub struct RandomWalk {
     random_walk_internal: Vec<NodeIndex>,
+}
+
+impl RandomWalk {
+    pub fn new() -> Self {
+        RandomWalk {
+            random_walk_internal: Vec::new(),
+        }
+    }
+
+    pub fn add_next(&mut self, idx: NodeIndex) {
+        self.random_walk_internal.push(idx);
+    }
+
+    pub fn count_visits(&self, idx: &NodeIndex) -> usize {
+        self.random_walk_internal.iter().filter(|i| i == &idx).count()
+    }
 }
 
 // Just an alias for now.
@@ -170,6 +207,23 @@ impl Default for HyperParams {
     }
 }
 
+/// The damping factors for project and accounts
+pub struct DampingFactors {
+    pub project: f64,
+    pub account: f64,
+}
+
+/// The default for the damping factors in other ranks.
+/// The whitepaper did not suggest values for the damping factors.
+impl Default for DampingFactors {
+    fn default() -> Self {
+        DampingFactors {
+            project: 0.85,
+            account: 0.85,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum Dependency {
     Contrib(Weight),
@@ -191,6 +245,18 @@ impl fmt::Display for Dependency {
     }
 }
 
+impl  Dependency {
+    pub fn get_weight(&self) -> &Weight {
+        match self {
+            Dependency::Contrib(ref w) => w,
+            Dependency::ContribPrime(ref w) => w,
+            Dependency::Maintain(ref w) => w,
+            Dependency::MaintainPrime(ref w) => w,
+            Dependency::Depend(ref w) => w,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd)]
 pub struct ProjectAttributes {
     pub id: String,
@@ -199,8 +265,8 @@ pub struct ProjectAttributes {
 
 #[derive(Debug, PartialOrd, Eq, PartialEq)]
 pub struct AccountAttributes {
-    id: String,
-    osrank: Option<Osrank>,
+    pub id: String,
+    pub osrank: Option<Osrank>,
 }
 
 #[derive(Debug, PartialOrd, PartialEq, Eq)]
@@ -209,11 +275,21 @@ pub enum Artifact {
     Account(AccountAttributes),
 }
 
+impl Artifact {
+    // Set the osrank attribute of the Artifact
+    pub fn set_osrank(&mut self, rank: Option<Osrank>) {
+        match self {
+            Artifact::Project(attrs) => attrs.osrank = rank,
+            Artifact::Account(attrs) => attrs.osrank = rank,
+        }
+    }
+}
+
 impl fmt::Display for Artifact {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self {
-            Artifact::Project(ref attrs) => write!(f, "{}", attrs.id),
-            Artifact::Account(ref attrs) => write!(f, "{}", attrs.id),
+            Artifact::Project(ref attrs) => write!(f, "id: {} osrank: {:.5}", attrs.id, attrs.osrank.unwrap()),
+            Artifact::Account(ref attrs) => write!(f, "id: {} osrank: {:.5}", attrs.id, attrs.osrank.unwrap()),
         }
     }
 }
@@ -228,7 +304,6 @@ impl Network {
     /// Adds an Artifact to the Network.
     pub fn add_artifact(&mut self, artifact: Artifact) {
         let _ = self.from_graph.add_node(artifact);
-        ()
     }
 
     /// Adds a Dependency to the Network. It's unsafe in the sense it's
@@ -238,6 +313,12 @@ impl Network {
         let _ =
             self.from_graph
                 .add_edge(NodeIndex::from(source), NodeIndex::from(target), dependency);
-        ()
+    }
+
+    // So far only for debugging. Prints all artifacts with their ids and osranks
+    pub fn print_artifacts(&self) {
+        for arti in self.from_graph.raw_nodes().iter().map(|node| &node.weight) {
+            println!("{}", arti);
+        }
     }
 }
