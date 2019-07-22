@@ -1,0 +1,4 @@
+steps:
+  - command: 'cargo test --all'
+    agents:
+      rust: "true"
