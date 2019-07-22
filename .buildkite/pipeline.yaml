@@ -1,4 +1,6 @@
 steps:
   - command: 'cargo test --all'
+    env:
+        DOCKER_IMAGE: "rust:1.36.0-slim-buster"
     agents:
       rust: "true"
