@@ -3,28 +3,39 @@ extern crate num_traits;
 extern crate petgraph;
 
 use std::fmt;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::ops::{Div, Mul, Rem};
+use std::path::Path;
 
+use crate::protocol_traits::graph::{EdgeReference, Graph, NodeIds};
 use fraction::{Fraction, GenericFraction};
 use num_traits::{Num, One, Signed, Zero};
-use petgraph::graph::NodeIndex;
-use petgraph::{Directed, Graph};
+use petgraph::dot::{Config, Dot};
+use petgraph::graph::{edge_index, node_index, NodeIndex};
+use petgraph::visit::EdgeRef;
+use petgraph::Directed;
 
+/// The `Osrank` score, modeled as a fraction. It has a default value of `Zero`,
+/// in case no `Osrank` is provided/calculated yet.
 pub type Osrank = Fraction;
 
 #[derive(Debug, Default, PartialEq, Eq)]
-pub struct RandomWalks {
-    random_walks_internal: Vec<RandomWalk>,
+pub struct RandomWalks<Id> {
+    random_walks_internal: Vec<RandomWalk<Id>>,
 }
 
-impl RandomWalks {
+impl<Id> RandomWalks<Id>
+where
+    Id: PartialEq,
+{
     pub fn new() -> Self {
         RandomWalks {
             random_walks_internal: Vec::new(),
         }
     }
 
-    pub fn add_walk(&mut self, walk: RandomWalk) {
+    pub fn add_walk(&mut self, walk: RandomWalk<Id>) {
         self.random_walks_internal.push(walk);
     }
 
@@ -32,29 +43,38 @@ impl RandomWalks {
         self.random_walks_internal.len()
     }
 
-    pub fn count_visits(&self, idx: NodeIndex) -> usize {
-        self.random_walks_internal.iter().map(|rw| rw.count_visits(&idx)).sum()
+    pub fn count_visits(&self, idx: Id) -> usize {
+        self.random_walks_internal
+            .iter()
+            .map(|rw| rw.count_visits(&idx))
+            .sum()
     }
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Hash)]
-pub struct RandomWalk {
-    random_walk_internal: Vec<NodeIndex>,
+pub struct RandomWalk<Id> {
+    random_walk_internal: Vec<Id>,
 }
 
-impl RandomWalk {
+impl<Id> RandomWalk<Id>
+where
+    Id: PartialEq,
+{
     pub fn new() -> Self {
         RandomWalk {
             random_walk_internal: Vec::new(),
         }
     }
 
-    pub fn add_next(&mut self, idx: NodeIndex) {
+    pub fn add_next(&mut self, idx: Id) {
         self.random_walk_internal.push(idx);
     }
 
-    pub fn count_visits(&self, idx: &NodeIndex) -> usize {
-        self.random_walk_internal.iter().filter(|i| i == &idx).count()
+    pub fn count_visits(&self, idx: &Id) -> usize {
+        self.random_walk_internal
+            .iter()
+            .filter(|i| i == &idx)
+            .count()
     }
 }
 
@@ -245,7 +265,7 @@ impl fmt::Display for Dependency {
     }
 }
 
-impl  Dependency {
+impl Dependency {
     pub fn get_weight(&self) -> &Weight {
         match self {
             Dependency::Contrib(ref w) => w,
@@ -260,13 +280,13 @@ impl  Dependency {
 #[derive(Debug, PartialEq, Eq, PartialOrd)]
 pub struct ProjectAttributes {
     pub id: String,
-    pub osrank: Option<Osrank>,
+    pub osrank: Osrank,
 }
 
 #[derive(Debug, PartialOrd, Eq, PartialEq)]
 pub struct AccountAttributes {
     pub id: String,
-    pub osrank: Option<Osrank>,
+    pub osrank: Osrank,
 }
 
 #[derive(Debug, PartialOrd, PartialEq, Eq)]
@@ -277,7 +297,7 @@ pub enum Artifact {
 
 impl Artifact {
     // Set the osrank attribute of the Artifact
-    pub fn set_osrank(&mut self, rank: Option<Osrank>) {
+    pub fn set_osrank(&mut self, rank: Osrank) {
         match self {
             Artifact::Project(attrs) => attrs.osrank = rank,
             Artifact::Account(attrs) => attrs.osrank = rank,
@@ -288,8 +308,12 @@ impl Artifact {
 impl fmt::Display for Artifact {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self {
-            Artifact::Project(ref attrs) => write!(f, "id: {} osrank: {:.5}", attrs.id, attrs.osrank.unwrap()),
-            Artifact::Account(ref attrs) => write!(f, "id: {} osrank: {:.5}", attrs.id, attrs.osrank.unwrap()),
+            Artifact::Project(ref attrs) => {
+                write!(f, "id: {} osrank: {:.5}", attrs.id, attrs.osrank)
+            }
+            Artifact::Account(ref attrs) => {
+                write!(f, "id: {} osrank: {:.5}", attrs.id, attrs.osrank)
+            }
         }
     }
 }
@@ -297,19 +321,19 @@ impl fmt::Display for Artifact {
 /// The network graph from the paper, comprising of both accounts and projects.
 #[derive(Debug, Default)]
 pub struct Network {
-    pub from_graph: Graph<Artifact, Dependency, Directed>,
+    from_graph: petgraph::Graph<Artifact, Dependency, Directed>,
 }
 
 impl Network {
     /// Adds an Artifact to the Network.
-    pub fn add_artifact(&mut self, artifact: Artifact) {
+    fn add_artifact(&mut self, artifact: Artifact) {
         let _ = self.from_graph.add_node(artifact);
     }
 
     /// Adds a Dependency to the Network. It's unsafe in the sense it's
     /// callers' responsibility to ensure that the source and target exist
     /// in the input Network.
-    pub fn unsafe_add_dependency(&mut self, source: u32, target: u32, dependency: Dependency) {
+    fn unsafe_add_dependency(&mut self, source: u32, target: u32, dependency: Dependency) {
         let _ =
             self.from_graph
                 .add_edge(NodeIndex::from(source), NodeIndex::from(target), dependency);
@@ -320,5 +344,85 @@ impl Network {
         for arti in self.from_graph.raw_nodes().iter().map(|node| &node.weight) {
             println!("{}", arti);
         }
+    }
+
+    /// Debug-only function to render a Network into a Graphiz dot file.
+    pub fn to_graphviz_dot(&self, output_path: &Path) -> Result<(), Box<std::io::Error>> {
+        let mut dot_file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(output_path)?;
+        dot_file.write_fmt(format_args!(
+            "{}",
+            Dot::with_config(&self.from_graph, &[Config::EdgeNoLabel])
+        ))?;
+        Ok(())
+    }
+}
+
+impl Graph for Network {
+    type NodeId = usize;
+    type EdgeId = usize;
+    type NodeMetadata = Artifact;
+    type EdgeMetadata = Dependency;
+
+    fn add_node(&mut self, node_metadata: Self::NodeMetadata) {
+        self.add_artifact(node_metadata)
+    }
+
+    fn add_edge(
+        &mut self,
+        source: Self::NodeId,
+        target: Self::NodeId,
+        edge_metadata: Self::EdgeMetadata,
+    ) {
+        self.unsafe_add_dependency(source as u32, target as u32, edge_metadata)
+    }
+
+    fn neighbours(&self, node_id: &Self::NodeId) -> Vec<EdgeReference<Self::NodeId, Self::EdgeId>> {
+        let mut neighbours = Vec::default();
+        for eref in self.from_graph.edges(node_index(*node_id)) {
+            neighbours.push(EdgeReference {
+                source: eref.source().index(),
+                target: eref.target().index(),
+                id: eref.id().index(),
+            })
+        }
+
+        neighbours
+    }
+
+    fn node_ids(&self) -> NodeIds<Self::NodeId> {
+        NodeIds {
+            range: 0..self.from_graph.node_count(),
+            to_node_id: Box::new(move |i| i),
+        }
+    }
+
+    fn edge_count(&self) -> usize {
+        self.from_graph.edge_count()
+    }
+
+    fn lookup_node_metadata(&self, node_id: &Self::NodeId) -> Option<&Self::NodeMetadata> {
+        Some(&self.from_graph[node_index(*node_id)])
+    }
+    fn lookup_edge_metadata(&self, edge_id: &Self::EdgeId) -> Option<&Self::EdgeMetadata> {
+        Some(&self.from_graph[edge_index(*edge_id)])
+    }
+
+    fn set_node_metadata(&mut self, node_id: &Self::NodeId, new: Self::NodeMetadata) {
+        self.from_graph[node_index(*node_id)] = new
+    }
+
+    fn update_node_metadata(
+        &mut self,
+        node_id: &Self::NodeId,
+        mut update_fn: Box<FnMut(&mut Self::NodeMetadata) -> ()>,
+    ) {
+        update_fn(&mut self.from_graph[node_index(*node_id)])
+    }
+
+    fn set_edge_metadata(&mut self, edge_id: &Self::EdgeId, new: Self::EdgeMetadata) {
+        self.from_graph[edge_index(*edge_id)] = new
     }
 }

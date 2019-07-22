@@ -2,7 +2,6 @@ extern crate osrank;
 
 use std::fs::File;
 
-use self::osrank::exporters::dot;
 use self::osrank::importers::gephi_json::{from_gephi_json, GephiEdge, GephiNode};
 
 fn main() -> Result<(), Box<std::error::Error>> {
@@ -16,6 +15,6 @@ fn main() -> Result<(), Box<std::error::Error>> {
 
     // Render to file
     println!("Rendering the network to a file..");
-    dot::to_graphviz_dot("rust_network.dot".as_ref(), &cargo_network)?;
+    &cargo_network.to_graphviz_dot("rust_network.dot".as_ref())?;
     Ok(())
 }

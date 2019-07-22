@@ -4,53 +4,41 @@ extern crate petgraph;
 extern crate rand;
 extern crate sprs;
 
+use crate::protocol_traits::graph::Graph;
 use crate::protocol_traits::ledger::LedgerView;
-use crate::types::{Network, Osrank, RandomWalk, RandomWalks, SeedSet};
+use crate::types::{Artifact, Dependency, Osrank, RandomWalk, RandomWalks, SeedSet};
 use fraction::Fraction;
-use petgraph::visit::EdgeRef;
 use rand::distributions::WeightedError;
 use rand::seq::SliceRandom;
 use rand::Rng;
-use std::iter::FromIterator;
 
 #[derive(Debug)]
 pub enum OsrankError {}
 
-/// A view over the whole network.
-/// The spirit behind this time would be to efficiently capture only a subset
-/// of a potentially very big Network graph, by storing only the data we are
-/// interested working with at any given stage.
-// #[derive(Debug, PartialEq, Eq)]
-// pub struct NetworkView {}
-//
-// impl NetworkView {
-//     pub fn from_network(network: &Network) -> Self {
-//         unimplemented!();
-//     }
-// }
-
-type NetworkView = Network;
-
 #[derive(Debug)]
-pub struct WalkResult {
-    network_view: NetworkView,
-    walks: RandomWalks,
+// TODO(adn) We shouldn't copy here, but rather have
+// a `network_view: &'a G`.
+pub struct WalkResult<G, I> {
+    network_view: G,
+    walks: RandomWalks<I>,
 }
 
-pub fn random_walk<L>(
+pub fn random_walk<'a, L, G>(
     seed_set: Option<SeedSet>,
-    network: &NetworkView,
+    network: &G,
     ledger_view: &L,
     iter: i32,
-) -> Result<WalkResult, OsrankError>
+) -> Result<WalkResult<G, G::NodeId>, OsrankError>
 where
     L: LedgerView,
+    G: Graph<EdgeMetadata = Dependency>,
+    G::NodeId: PartialEq,
 {
     match seed_set {
         Some(_) => unimplemented!(),
         None => {
             let mut walks = RandomWalks::new();
-            for i in network.from_graph.node_indices() {
+            for i in network.node_ids() {
                 for _ in 0..iter {
                     let mut walk = RandomWalk::new();
                     walk.add_next(i);
@@ -60,13 +48,16 @@ where
                     while rand::thread_rng().gen::<f64>()
                         < ledger_view.get_damping_factors().project
                     {
-                        let neighbors = Vec::from_iter(network.from_graph.edges(current_node));
+                        let neighbors = network.neighbours(&current_node);
                         match neighbors.choose_weighted(&mut rand::thread_rng(), |item| {
-                            item.weight().get_weight().as_f64().unwrap()
+                            network
+                                .lookup_edge_metadata(&item.id)
+                                .and_then(|m| m.get_weight().as_f64())
+                                .unwrap()
                         }) {
                             Ok(next_edge) => {
-                                walk.add_next(next_edge.target());
-                                current_node = next_edge.target();
+                                walk.add_next(next_edge.target);
+                                current_node = next_edge.target;
                             }
                             Err(WeightedError::NoItem) => break,
                             Err(error) => panic!("Problem with the neighbors: {:?}", error),
@@ -75,11 +66,13 @@ where
                     walks.add_walk(walk);
                 }
             }
+
             // TODO return actual NetworkView
             let res = WalkResult {
-                network_view: NetworkView::default(),
+                network_view: G::default(),
                 walks,
             };
+
             Ok(res)
         }
     }
@@ -96,23 +89,29 @@ where
 //     rank_network(&phase2.walks, &mut phase2.network_view)
 // }
 
-pub fn rank_network<L>(
-    random_walks: &RandomWalks,
-    network_view: &mut NetworkView,
+pub fn rank_network<L, G>(
+    random_walks: &RandomWalks<G::NodeId>,
+    network_view: &mut G,
     ledger_view: &L,
 ) -> Result<(), OsrankError>
 where
     L: LedgerView,
+    G: Graph<NodeMetadata = Artifact>,
+    G::NodeId: PartialEq,
 {
-    for node_idx in network_view.from_graph.node_indices() {
+    for node_idx in network_view.node_ids() {
         let total_walks = random_walks.len();
         let node_visits = &random_walks.count_visits(node_idx);
         let rank = Fraction::from(ledger_view.get_damping_factors().project)
             * Osrank::new(
                 *node_visits as u32,
-                (total_walks * network_view.from_graph.node_indices().count()) as u32,
+                (total_walks * network_view.node_ids().count()) as u32,
             );
-        network_view.from_graph[node_idx].set_osrank(Some(rank));
+
+        network_view.update_node_metadata(
+            &node_idx,
+            Box::new(move |metadata| metadata.set_osrank(rank)),
+        );
     }
     Ok(())
 }
@@ -121,62 +120,63 @@ mod tests {
     use super::*;
     use crate::protocol_traits::ledger::MockLedger;
     use crate::types::{
-        AccountAttributes, Artifact, DampingFactors, Dependency, HyperParams, ProjectAttributes,
-        Weight,
+        AccountAttributes, Artifact, DampingFactors, Dependency, HyperParams, Network,
+        ProjectAttributes, Weight,
     };
+    use num_traits::Zero;
 
     #[test]
     fn everything_ok() {
         // build the example network
-        let mut network = NetworkView::default();
+        let mut network = Network::default();
         let p1 = Artifact::Project(ProjectAttributes {
             id: "p1".to_string(),
-            osrank: None,
+            osrank: Zero::zero(),
         });
         let p2 = Artifact::Project(ProjectAttributes {
             id: "p2".to_string(),
-            osrank: None,
+            osrank: Zero::zero(),
         });
         let p3 = Artifact::Project(ProjectAttributes {
             id: "p3".to_string(),
-            osrank: None,
+            osrank: Zero::zero(),
         });
         let a1 = Artifact::Account(AccountAttributes {
             id: "a1".to_string(),
-            osrank: None,
+            osrank: Zero::zero(),
         });
         let a2 = Artifact::Account(AccountAttributes {
             id: "a2".to_string(),
-            osrank: None,
+            osrank: Zero::zero(),
         });
         let a3 = Artifact::Account(AccountAttributes {
             id: "a3".to_string(),
-            osrank: None,
+            osrank: Zero::zero(),
         });
-        network.add_artifact(p1);
-        network.add_artifact(p2);
-        network.add_artifact(p3);
-        network.add_artifact(a1);
-        network.add_artifact(a2);
-        network.add_artifact(a3);
-        network.unsafe_add_dependency(0, 3, Dependency::Depend(Weight::new(3, 7)));
-        network.unsafe_add_dependency(3, 0, Dependency::Depend(Weight::new(1, 1)));
-        network.unsafe_add_dependency(0, 1, Dependency::Depend(Weight::new(4, 7)));
-        network.unsafe_add_dependency(1, 4, Dependency::Depend(Weight::new(1, 1)));
-        network.unsafe_add_dependency(4, 1, Dependency::Depend(Weight::new(1, 3)));
-        network.unsafe_add_dependency(4, 2, Dependency::Depend(Weight::new(2, 3)));
-        network.unsafe_add_dependency(2, 4, Dependency::Depend(Weight::new(11, 28)));
-        network.unsafe_add_dependency(2, 5, Dependency::Depend(Weight::new(1, 28)));
-        network.unsafe_add_dependency(2, 0, Dependency::Depend(Weight::new(2, 7)));
-        network.unsafe_add_dependency(2, 1, Dependency::Depend(Weight::new(2, 7)));
-        network.unsafe_add_dependency(5, 2, Dependency::Depend(Weight::new(1, 1)));
+        network.add_node(p1);
+        network.add_node(p2);
+        network.add_node(p3);
+        network.add_node(a1);
+        network.add_node(a2);
+        network.add_node(a3);
+        network.add_edge(0, 3, Dependency::Depend(Weight::new(3, 7)));
+        network.add_edge(3, 0, Dependency::Depend(Weight::new(1, 1)));
+        network.add_edge(0, 1, Dependency::Depend(Weight::new(4, 7)));
+        network.add_edge(1, 4, Dependency::Depend(Weight::new(1, 1)));
+        network.add_edge(4, 1, Dependency::Depend(Weight::new(1, 3)));
+        network.add_edge(4, 2, Dependency::Depend(Weight::new(2, 3)));
+        network.add_edge(2, 4, Dependency::Depend(Weight::new(11, 28)));
+        network.add_edge(2, 5, Dependency::Depend(Weight::new(1, 28)));
+        network.add_edge(2, 0, Dependency::Depend(Weight::new(2, 7)));
+        network.add_edge(2, 1, Dependency::Depend(Weight::new(2, 7)));
+        network.add_edge(5, 2, Dependency::Depend(Weight::new(1, 1)));
 
         let mock_ledger = MockLedger {
             params: HyperParams::default(),
             factors: DampingFactors::default(),
         };
 
-        assert_eq!(network.from_graph.edge_count(), 11);
+        assert_eq!(network.edge_count(), 11);
         let walked = random_walk(None, &network, &mock_ledger, 10).unwrap();
         assert_eq!(
             rank_network(&walked.walks, &mut network, &mock_ledger).unwrap(),
