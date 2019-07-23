@@ -8,7 +8,7 @@ use std::io::Write;
 use std::ops::{Div, Mul, Rem};
 use std::path::Path;
 
-use crate::protocol_traits::graph::{EdgeReference, Graph, PrintableGraph, NodeIds};
+use crate::protocol_traits::graph::{EdgeReference, Graph, NodeIds};
 use fraction::{Fraction, GenericFraction};
 use num_traits::{Num, One, Signed, Zero};
 use petgraph::dot::{Config, Dot};
@@ -418,6 +418,12 @@ impl Graph for Network {
     fn set_edge_metadata(&mut self, edge_id: &Self::EdgeId, new: Self::EdgeMetadata) {
         self.from_graph[edge_index(*edge_id)] = new
     }
+}
+
+/// Trait to print (parts of) the for debugging purposes
+pub trait PrintableGraph: Graph {
+    /// Prints all nodes and their attributes
+    fn print_nodes(&self);
 }
 
 impl PrintableGraph for Network {
