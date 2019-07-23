@@ -1,7 +1,10 @@
+extern crate num_traits;
 extern crate serde;
 extern crate serde_json;
 
+use crate::protocol_traits::graph::Graph;
 use crate::types::{Artifact, Dependency, Network, ProjectAttributes, Weight};
+use num_traits::Zero;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -13,8 +16,8 @@ pub struct GephiNode {
 
 #[derive(Debug, Deserialize)]
 pub struct GephiEdge {
-    s: u32,
-    t: u32,
+    s: usize,
+    t: usize,
     w: f64,
 }
 
@@ -25,16 +28,16 @@ pub fn from_gephi_json(nodes: Vec<GephiNode>, edges: Vec<GephiEdge>) -> Network 
     for node in nodes {
         let project = Artifact::Project(ProjectAttributes {
             id: node.id,
-            osrank: None,
+            osrank: Zero::zero(),
         });
-        network.add_artifact(project);
+        network.add_node(project);
     }
 
     for edge in edges {
         //FIXME(adn) This should take into account normalisation and
         //redistribution of the weights etc.
         let depends_on = Dependency::Depend(Weight::new(1, 1));
-        network.unsafe_add_dependency(edge.s, edge.t, depends_on)
+        network.add_edge(edge.s, edge.t, depends_on)
     }
 
     network
