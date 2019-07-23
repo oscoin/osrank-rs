@@ -1,3 +1,6 @@
+#![allow(unknown_lints)]
+#![warn(clippy::all)]
+
 extern crate fraction;
 extern crate num_traits;
 extern crate petgraph;

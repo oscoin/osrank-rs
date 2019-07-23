@@ -372,7 +372,7 @@ fn resumes<'a>(resume_from: Option<&'a str>) -> Box<FnMut(&StringRecord) -> bool
     })
 }
 
-const GITHUB_BASE_URL: &'static str = "https://api.github.com";
+const GITHUB_BASE_URL: &str = "https://api.github.com";
 
 fn main() -> Result<(), AppError> {
     let github_token = env::var("OSRANK_GITHUB_TOKEN")?;

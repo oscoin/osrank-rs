@@ -537,18 +537,9 @@ fn build_adjacency_matrix(
     println!("Computing the pagerank...");
     let pagerank_matrix = pagerank_naive_iterative(&network_t_norm, 0.85, outbound_links_factor);
 
-    let pagerank_matrix_labeled = Rank::from(
-        pagerank_matrix.labeled((
-            deps_meta
-                .labels
-                .iter()
-                .cloned()
-                .collect::<Vec<String>>()
-                .as_slice(),
-            &[],
-        )),
-    )
-    .unwrap_or_else(|e| panic!(e));
+    let pagerank_matrix_labeled =
+        Rank::from(pagerank_matrix.labeled((deps_meta.labels.to_vec().as_slice(), &[])))
+            .unwrap_or_else(|e| panic!(e));
 
     println!("Write the matrix to file (skipped for now)");
 

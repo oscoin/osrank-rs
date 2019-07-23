@@ -1,3 +1,6 @@
+#![allow(unknown_lints)]
+#![warn(clippy::all)]
+
 extern crate either;
 extern crate ndarray;
 extern crate petgraph;
@@ -21,7 +24,7 @@ pub struct WalkResult<'a, G, I> {
     walks: RandomWalks<I>,
 }
 
-pub fn random_walk<'a, L, G>(
+pub fn random_walk<L, G>(
     seed_set: Option<SeedSet>,
     network: &'a G,
     ledger_view: &L,
