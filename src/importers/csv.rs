@@ -1,17 +1,20 @@
 #![allow(unknown_lints)]
 #![warn(clippy::all)]
 
+extern crate csv;
 extern crate num_traits;
 extern crate serde;
 extern crate sprs;
 
+use crate::adjacency::new_network_matrix;
 use crate::linalg::SparseMatrix;
 use crate::protocol_traits::graph::Graph;
 use crate::protocol_traits::ledger::LedgerView;
+use crate::types::{AccountAttributes, Artifact, Dependency, Network, ProjectAttributes};
 use core::fmt;
-use num_traits::{Num, One};
+use num_traits::{Num, One, Zero};
 use serde::Deserialize;
-use sprs::{TriMat, TriMatBase};
+use sprs::{CsMat, TriMat, TriMatBase};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Read;
@@ -56,6 +59,12 @@ impl DependenciesMetadata {
     }
 }
 
+impl Default for DependenciesMetadata {
+    fn default() -> Self {
+        DependenciesMetadata::new()
+    }
+}
+
 pub struct ContributionsMetadata {
     pub contributors: HashSet<Contributor>,
     pub contributor2index: HashMap<Contributor, LocalMatrixIndex>,
@@ -67,6 +76,12 @@ impl ContributionsMetadata {
             contributors: Default::default(),
             contributor2index: Default::default(),
         }
+    }
+}
+
+impl Default for ContributionsMetadata {
+    fn default() -> Self {
+        ContributionsMetadata::new()
     }
 }
 
@@ -123,17 +138,99 @@ impl From<csv::Error> for CsvImportError {
     }
 }
 
-pub fn from_csv_files<G, L>(
+pub fn import_network<G, L>(
     deps_csv_file: &Path,
     deps_meta_csv_file: &Path,
     contrib_csv_file: &Path,
+    //TODO(and) We want to consider maintainers at some point.
+    _maintainers_csv_file: Option<&Path>,
     ledger_view: &L,
-) -> Result<G, CsvImportError>
+) -> Result<Network<f64>, CsvImportError>
 where
-    G: Graph,
     L: LedgerView,
 {
-    unimplemented!()
+    let deps_csv = csv::Reader::from_reader(File::open(deps_csv_file)?);
+    let deps_meta_csv = csv::Reader::from_reader(File::open(deps_meta_csv_file)?);
+    let contribs_csv_first_pass = csv::Reader::from_reader(File::open(contrib_csv_file)?);
+    let mut deps_meta = DependenciesMetadata::new();
+    let mut contribs_meta = ContributionsMetadata::new();
+
+    let mut graph = Network::default();
+
+    // Iterate once over the dependencies metadata and store the name and id.
+    // We need to maintain some sort of mapping between the order of visit
+    // (which will be used as the index in the matrix) and the project id.
+    for result in deps_meta_csv.into_records().filter_map(|e| e.ok()) {
+        let row: DepMetaRow = result.deserialize(None)?;
+        let prj_id = row.name.clone();
+        deps_meta.ids.insert(row.id);
+        deps_meta.labels.push(row.name);
+        deps_meta
+            .project2index
+            .insert(row.id, deps_meta.ids.len() - 1);
+
+        // Add the projects as nodes in the graph.
+        graph.add_node(Artifact::Project(ProjectAttributes {
+            id: prj_id,
+            osrank: Zero::zero(),
+        }));
+    }
+
+    // Iterate once over the contributions and build a matrix where
+    // rows are the project names and columns the (unique) contributors.
+    for result in contribs_csv_first_pass
+        .into_records()
+        .filter_map(|e| e.ok())
+    {
+        let row: ContribRow = result.deserialize(None)?;
+        let c = row.contributor.clone();
+        let contrib_id = row.contributor.clone();
+
+        if contribs_meta.contributors.get(&row.contributor).is_none() {
+            contribs_meta.contributors.insert(row.contributor);
+            contribs_meta
+                .contributor2index
+                .insert(c, contribs_meta.contributors.len() - 1);
+
+            graph.add_node(Artifact::Account(AccountAttributes {
+                id: contrib_id.to_string(),
+                osrank: Zero::zero(),
+            }));
+        }
+    }
+
+    //"Rewind" the file as we need a second pass.
+    let contribs_csv = csv::Reader::from_reader(File::open(contrib_csv_file)?);
+
+    let dep_adj_matrix = new_dependency_adjacency_matrix(&deps_meta, deps_csv)?;
+    let con_adj_matrix = new_contribution_adjacency_matrix(
+        &deps_meta,
+        &contribs_meta,
+        contribs_csv,
+        Box::new(f64::from),
+    )?;
+
+    //FIXME(adn) For now the maintenance matrix is empty.
+    let maintainers_matrix = CsMat::zero((dep_adj_matrix.rows(), con_adj_matrix.cols()));
+
+    let network_matrix = new_network_matrix(
+        &dep_adj_matrix,
+        &con_adj_matrix,
+        &maintainers_matrix,
+        &ledger_view.get_hyperparams(),
+    );
+
+    //FIXME(adn) Here we have a precision problem: we _have_ to convert the
+    //weights from fractions to f64 to avoid arithmetic overflows, but yet here
+    //it's nice to work with fractions.
+    for (source, row_vec) in network_matrix.outer_iterator().enumerate() {
+        for (target, weight) in row_vec.iter().enumerate() {
+            graph.add_edge(source, target, Dependency::Influence(*weight.1))
+        }
+    }
+
+    // Build a graph out of the matrix.
+    Ok(graph)
 }
 
 /// Creates a (sparse) adjacency matrix for the dependencies.

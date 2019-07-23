@@ -16,7 +16,7 @@ pub fn new_network_matrix<N>(
     dep_matrix: &SparseMatrix<N>,
     contrib_matrix: &SparseMatrix<N>,
     maintainer_matrix: &SparseMatrix<N>,
-    hyperparams: HyperParams,
+    hyperparams: &HyperParams,
 ) -> SparseMatrix<N>
 where
     N: Num + Copy + Default + From<Weight> + PartialOrd + Signed,

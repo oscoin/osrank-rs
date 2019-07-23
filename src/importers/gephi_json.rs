@@ -23,7 +23,7 @@ pub struct GephiEdge {
 
 /// Construct a Network out of a Gephi json file. Only projects are supported
 /// for now.
-pub fn from_gephi_json(nodes: Vec<GephiNode>, edges: Vec<GephiEdge>) -> Network {
+pub fn from_gephi_json(nodes: Vec<GephiNode>, edges: Vec<GephiEdge>) -> Network<Weight> {
     let mut network = Network::default();
     for node in nodes {
         let project = Artifact::Project(ProjectAttributes {

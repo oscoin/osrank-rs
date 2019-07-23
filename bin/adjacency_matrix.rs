@@ -18,7 +18,7 @@ use osrank::importers::csv::{
     new_contribution_adjacency_matrix, new_dependency_adjacency_matrix, ContribRow,
     ContributionsMetadata, CsvImportError, DepMetaRow, DependenciesMetadata,
 };
-use osrank::linalg::{hadamard_mul, transpose_storage, DenseMatrix, SparseMatrix};
+use osrank::linalg::{transpose_storage, DenseMatrix, SparseMatrix};
 use osrank::types::{HyperParams, Weight};
 use sprs::binop::{add_mat_same_storage, scalar_mul_mat};
 use sprs::CsMat;
@@ -148,14 +148,17 @@ where
     dense
 }
 
-fn debug_sparse_matrix_to_csv<N>(matrix: &CsMat<N>, out_path: &str) -> Result<(), CsvImportError>
+pub fn debug_sparse_matrix_to_csv<N>(
+    matrix: &CsMat<N>,
+    out_path: &str,
+) -> Result<(), CsvImportError>
 where
     N: DisplayAsF64 + Zero + Clone + Copy,
 {
     debug_dense_matrix_to_csv(&matrix.to_dense(), out_path)
 }
 
-fn debug_dense_matrix_to_csv<N>(
+pub fn debug_dense_matrix_to_csv<N>(
     matrix: &DenseMatrix<N>,
     out_path: &str,
 ) -> Result<(), CsvImportError>
@@ -271,7 +274,7 @@ fn build_adjacency_matrix(
         &dep_adj_matrix,
         &con_adj_matrix,
         &maintenance_matrix,
-        HyperParams::default(),
+        &HyperParams::default(),
     );
 
     println!("assert_normalised(network_matrix)");
@@ -364,7 +367,7 @@ mod tests {
     use num_traits::{One, Zero};
     use osrank::adjacency::new_network_matrix;
     use osrank::importers::csv::{ContributionsMetadata, DependenciesMetadata};
-    use osrank::linalg::{normalise_rows, normalise_rows_mut};
+    use osrank::linalg::{hadamard_mul, normalise_rows, normalise_rows_mut};
     use osrank::types::{HyperParams, Weight};
     use pretty_assertions::assert_eq;
     use sprs::{CsMat, TriMat, TriMatBase};
@@ -397,7 +400,7 @@ mod tests {
         );
 
         let input2 = input.clone();
-        let result = super::hadamard_mul(input, &input2);
+        let result = hadamard_mul(input, &input2);
 
         let expected = arr2(&[
             [64, 16, 1, 0],
@@ -494,7 +497,7 @@ mod tests {
         );
         let m = CsMat::csr_from_dense(arr2(&[[o, z, z], [z, o, z], [z, o, z]]).view(), z);
 
-        let network = new_network_matrix(&d, &c, &m, HyperParams::default());
+        let network = new_network_matrix(&d, &c, &m, &HyperParams::default());
 
         let expected = arr2(&[
             [z, Weight::new(4, 7), z, Weight::new(3, 7), z, z],

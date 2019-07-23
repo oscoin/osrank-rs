@@ -23,6 +23,10 @@ pub struct WalkResult<'a, G, I> {
     walks: RandomWalks<I>,
 }
 
+// FIXME(adn) It should be possible to make this code parametric over
+// Dependency<W>, for I have ran into a cryptic error about the SampleBorrow
+// trait not be implemented, and wasn't able to immediately make the code
+// typecheck.
 pub fn random_walk<L, G>(
     seed_set: Option<SeedSet>,
     network: &'a G,
@@ -31,7 +35,7 @@ pub fn random_walk<L, G>(
 ) -> Result<WalkResult<'a, G, G::NodeId>, OsrankError>
 where
     L: LedgerView,
-    G: Graph<EdgeMetadata = Dependency>,
+    G: Graph<EdgeMetadata = Dependency<f64>>,
     G::NodeId: PartialEq,
 {
     match seed_set {
@@ -52,7 +56,7 @@ where
                         match neighbors.choose_weighted(&mut rand::thread_rng(), |item| {
                             network
                                 .lookup_edge_metadata(&item.id)
-                                .and_then(|m| m.get_weight().as_f64())
+                                .and_then(|m| Some(m.get_weight()))
                                 .unwrap()
                         }) {
                             Ok(next_edge) => {
@@ -177,17 +181,61 @@ mod tests {
         network.add_node(a1);
         network.add_node(a2);
         network.add_node(a3);
-        network.add_edge(0, 3, Dependency::Depend(Weight::new(3, 7)));
-        network.add_edge(3, 0, Dependency::Depend(Weight::new(1, 1)));
-        network.add_edge(0, 1, Dependency::Depend(Weight::new(4, 7)));
-        network.add_edge(1, 4, Dependency::Depend(Weight::new(1, 1)));
-        network.add_edge(4, 1, Dependency::Depend(Weight::new(1, 3)));
-        network.add_edge(4, 2, Dependency::Depend(Weight::new(2, 3)));
-        network.add_edge(2, 4, Dependency::Depend(Weight::new(11, 28)));
-        network.add_edge(2, 5, Dependency::Depend(Weight::new(1, 28)));
-        network.add_edge(2, 0, Dependency::Depend(Weight::new(2, 7)));
-        network.add_edge(2, 1, Dependency::Depend(Weight::new(2, 7)));
-        network.add_edge(5, 2, Dependency::Depend(Weight::new(1, 1)));
+        network.add_edge(
+            0,
+            3,
+            Dependency::Influence(Weight::new(3, 7).as_f64().unwrap()),
+        );
+        network.add_edge(
+            3,
+            0,
+            Dependency::Influence(Weight::new(1, 1).as_f64().unwrap()),
+        );
+        network.add_edge(
+            0,
+            1,
+            Dependency::Influence(Weight::new(4, 7).as_f64().unwrap()),
+        );
+        network.add_edge(
+            1,
+            4,
+            Dependency::Influence(Weight::new(1, 1).as_f64().unwrap()),
+        );
+        network.add_edge(
+            4,
+            1,
+            Dependency::Influence(Weight::new(1, 3).as_f64().unwrap()),
+        );
+        network.add_edge(
+            4,
+            2,
+            Dependency::Influence(Weight::new(2, 3).as_f64().unwrap()),
+        );
+        network.add_edge(
+            2,
+            4,
+            Dependency::Influence(Weight::new(11, 28).as_f64().unwrap()),
+        );
+        network.add_edge(
+            2,
+            5,
+            Dependency::Influence(Weight::new(1, 28).as_f64().unwrap()),
+        );
+        network.add_edge(
+            2,
+            0,
+            Dependency::Influence(Weight::new(2, 7).as_f64().unwrap()),
+        );
+        network.add_edge(
+            2,
+            1,
+            Dependency::Influence(Weight::new(2, 7).as_f64().unwrap()),
+        );
+        network.add_edge(
+            5,
+            2,
+            Dependency::Influence(Weight::new(1, 1).as_f64().unwrap()),
+        );
 
         let mock_ledger = MockLedger {
             params: HyperParams::default(),

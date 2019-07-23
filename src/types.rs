@@ -98,6 +98,12 @@ impl fmt::Debug for Weight {
     }
 }
 
+impl fmt::Display for Weight {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{}", self.get_weight)
+    }
+}
+
 impl Weight {
     pub fn new(numerator: u32, denominator: u32) -> Self {
         Weight {
@@ -248,34 +254,43 @@ impl Default for DampingFactors {
 }
 
 #[derive(Debug)]
-pub enum Dependency {
-    Contrib(Weight),
-    ContribPrime(Weight),
-    Maintain(Weight),
-    MaintainPrime(Weight),
-    Depend(Weight),
+pub enum Dependency<W> {
+    Contrib(W),
+    ContribPrime(W),
+    Maintain(W),
+    MaintainPrime(W),
+    Depend(W),
+    /// This is not in the original whitepaper, but it's used as an edge
+    /// metadata once we have normalised the edges and we have now only a
+    /// single directed edge from A -> B
+    Influence(W),
 }
 
-impl fmt::Display for Dependency {
+impl<W> fmt::Display for Dependency<W>
+where
+    W: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self {
-            Dependency::Contrib(ref w) => write!(f, "{:.5}", w.get_weight),
-            Dependency::ContribPrime(ref w) => write!(f, "{:.5}", w.get_weight),
-            Dependency::Maintain(ref w) => write!(f, "{:.5}", w.get_weight),
-            Dependency::MaintainPrime(ref w) => write!(f, "{:.5}", w.get_weight),
-            Dependency::Depend(ref w) => write!(f, "{:.5}", w.get_weight),
+            Dependency::Contrib(ref w) => write!(f, "{:.5}", w),
+            Dependency::ContribPrime(ref w) => write!(f, "{:.5}", w),
+            Dependency::Maintain(ref w) => write!(f, "{:.5}", w),
+            Dependency::MaintainPrime(ref w) => write!(f, "{:.5}", w),
+            Dependency::Depend(ref w) => write!(f, "{:.5}", w),
+            Dependency::Influence(ref w) => write!(f, "{:.5}", w),
         }
     }
 }
 
-impl Dependency {
-    pub fn get_weight(&self) -> &Weight {
+impl<W> Dependency<W> {
+    pub fn get_weight(&self) -> &W {
         match self {
             Dependency::Contrib(ref w) => w,
             Dependency::ContribPrime(ref w) => w,
             Dependency::Maintain(ref w) => w,
             Dependency::MaintainPrime(ref w) => w,
             Dependency::Depend(ref w) => w,
+            Dependency::Influence(ref w) => w,
         }
     }
 }
@@ -323,11 +338,14 @@ impl fmt::Display for Artifact {
 
 /// The network graph from the paper, comprising of both accounts and projects.
 #[derive(Debug, Default)]
-pub struct Network {
-    from_graph: petgraph::Graph<Artifact, Dependency, Directed>,
+pub struct Network<W> {
+    from_graph: petgraph::Graph<Artifact, Dependency<W>, Directed>,
 }
 
-impl Network {
+impl<W> Network<W>
+where
+    W: fmt::Display,
+{
     /// Adds an Artifact to the Network.
     fn add_artifact(&mut self, artifact: Artifact) {
         let _ = self.from_graph.add_node(artifact);
@@ -336,7 +354,7 @@ impl Network {
     /// Adds a Dependency to the Network. It's unsafe in the sense it's
     /// callers' responsibility to ensure that the source and target exist
     /// in the input Network.
-    fn unsafe_add_dependency(&mut self, source: u32, target: u32, dependency: Dependency) {
+    fn unsafe_add_dependency(&mut self, source: u32, target: u32, dependency: Dependency<W>) {
         let _ =
             self.from_graph
                 .add_edge(NodeIndex::from(source), NodeIndex::from(target), dependency);
@@ -356,11 +374,14 @@ impl Network {
     }
 }
 
-impl Graph for Network {
+impl<W> Graph for Network<W>
+where
+    W: Default + fmt::Display,
+{
     type NodeId = usize;
     type EdgeId = usize;
     type NodeMetadata = Artifact;
-    type EdgeMetadata = Dependency;
+    type EdgeMetadata = Dependency<W>;
 
     fn add_node(&mut self, node_metadata: Self::NodeMetadata) {
         self.add_artifact(node_metadata)
@@ -429,7 +450,10 @@ pub trait PrintableGraph: Graph {
     fn print_nodes(&self);
 }
 
-impl PrintableGraph for Network {
+impl<W> PrintableGraph for Network<W>
+where
+    W: Default + fmt::Display,
+{
     fn print_nodes(&self) {
         for arti in self.from_graph.raw_nodes().iter().map(|node| &node.weight) {
             println!("{}", arti);
