@@ -8,7 +8,7 @@ use std::io::Write;
 use std::ops::{Div, Mul, Rem};
 use std::path::Path;
 
-use crate::protocol_traits::graph::{EdgeReference, Graph, NodeIds};
+use crate::protocol_traits::graph::{EdgeReference, Graph, PrintableGraph, NodeIds};
 use fraction::{Fraction, GenericFraction};
 use num_traits::{Num, One, Signed, Zero};
 use petgraph::dot::{Config, Dot};
@@ -339,13 +339,6 @@ impl Network {
                 .add_edge(NodeIndex::from(source), NodeIndex::from(target), dependency);
     }
 
-    // So far only for debugging. Prints all artifacts with their ids and osranks
-    pub fn print_artifacts(&self) {
-        for arti in self.from_graph.raw_nodes().iter().map(|node| &node.weight) {
-            println!("{}", arti);
-        }
-    }
-
     /// Debug-only function to render a Network into a Graphiz dot file.
     pub fn to_graphviz_dot(&self, output_path: &Path) -> Result<(), Box<std::io::Error>> {
         let mut dot_file = OpenOptions::new()
@@ -424,5 +417,13 @@ impl Graph for Network {
 
     fn set_edge_metadata(&mut self, edge_id: &Self::EdgeId, new: Self::EdgeMetadata) {
         self.from_graph[edge_index(*edge_id)] = new
+    }
+}
+
+impl PrintableGraph for Network {
+    fn print_nodes(&self) {
+        for arti in self.from_graph.raw_nodes().iter().map(|node| &node.weight) {
+            println!("{}", arti);
+        }
     }
 }

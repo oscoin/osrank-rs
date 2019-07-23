@@ -136,6 +136,12 @@ pub trait Graph: Default {
     fn set_edge_metadata(&mut self, edge_id: &Self::EdgeId, new: Self::EdgeMetadata);
 }
 
+/// Trait to print (parts of) the for debugging purposes
+pub trait PrintableGraph: Graph {
+    /// Prints all nodes and their attributes
+    fn print_nodes(&self);
+}
+
 pub struct EdgeReference<NodeId, EdgeId> {
     pub source: NodeId,
     pub target: NodeId,
