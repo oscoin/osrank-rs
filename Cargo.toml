@@ -33,7 +33,7 @@ required-features = ["build-binary"]
 
 [features]
 
-build-binary = ["csv", "reqwest", "clap", "ndarray-linalg"]
+build-binary = ["csv", "reqwest", "clap"]
 
 [dependencies]
 
@@ -59,7 +59,6 @@ rand = "^0.6.5"
 csv = { version = "1.1", optional = true }
 reqwest = { version = "^0.9", optional = true }
 clap = { version = "^2.33", optional = true }
-ndarray-linalg = { git = "https://github.com/rust-ndarray/ndarray-linalg.git", branch = "master", features = ["openblas-static"], optional = true }
 
 [dev-dependencies]
 pretty_assertions = "0.6.1"
