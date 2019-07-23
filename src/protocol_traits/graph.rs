@@ -1,7 +1,6 @@
 #![allow(unknown_lints)]
 #![warn(clippy::all)]
 
-extern crate either;
 extern crate rand;
 
 use std::ops::Range;

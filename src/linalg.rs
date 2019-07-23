@@ -1,3 +1,6 @@
+#![allow(unknown_lints)]
+#![warn(clippy::all)]
+
 extern crate ndarray;
 extern crate sprs;
 

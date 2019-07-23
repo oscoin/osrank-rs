@@ -33,18 +33,18 @@ required-features = ["build-binary"]
 
 [features]
 
-build-binary = ["csv", "reqwest", "clap"]
+build-binary = ["reqwest", "clap", "failure", "failure_derive"]
 
 [dependencies]
 
-serde = { version = "1.0.60", features = ["derive"]}
-serde_json = "1.0.40"
-failure = "0.1.5"
-failure_derive = "0.1.5"
-either = "^1.5"
 num-traits = "^0.2"
 derive_more = "^0.13"
 itertools = "^0.8.0"
+
+#Importers/exporters crates
+csv = "^1.1"
+serde = { version = "1.0.60", features = ["derive"]}
+serde_json = "1.0.40"
 
 #Linear algebra/math crates
 petgraph = "0.4.13"
@@ -56,9 +56,10 @@ rand = "^0.6.5"
 
 # Binary-only dependencies
 # See: https://stackoverflow.com/questions/35711044/how-can-i-specify-binary-only-dependencies
-csv = { version = "1.1", optional = true }
 reqwest = { version = "^0.9", optional = true }
 clap = { version = "^2.33", optional = true }
+failure = { version = "0.1.5", optional = true}
+failure_derive = { version = "0.1.5", optional = true}
 
 [dev-dependencies]
 pretty_assertions = "0.6.1"

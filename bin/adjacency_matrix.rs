@@ -1,3 +1,6 @@
+#![allow(unknown_lints)]
+#![warn(clippy::all)]
+
 extern crate clap;
 extern crate failure;
 extern crate ndarray;
@@ -7,21 +10,23 @@ extern crate serde;
 extern crate sprs;
 
 use clap::{App, Arg};
-use failure::Fail;
 use itertools::Itertools;
 use ndarray::Array2;
+use osrank::adjacency::new_network_matrix;
 use osrank::collections::{Rank, WithLabels};
-use osrank::linalg::{hadamard_mul, normalise_rows, transpose_storage, DenseMatrix, SparseMatrix};
+use osrank::importers::csv::{
+    new_contribution_adjacency_matrix, new_dependency_adjacency_matrix, ContribRow,
+    ContributionsMetadata, CsvImportError, DepMetaRow, DependenciesMetadata,
+};
+use osrank::linalg::{hadamard_mul, transpose_storage, DenseMatrix, SparseMatrix};
 use osrank::types::{HyperParams, Weight};
-use serde::Deserialize;
 use sprs::binop::{add_mat_same_storage, scalar_mul_mat};
-use sprs::{hstack, vstack, CsMat, TriMat, TriMatBase};
+use sprs::CsMat;
 
 use core::fmt::Debug;
 use num_traits::{Num, One, Signed, Zero};
-use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::Write;
 
 //
 // Utility Traits
@@ -41,96 +46,6 @@ impl DisplayAsF64 for Weight {
     fn to_f64(self: Weight) -> f64 {
         self.as_f64().unwrap()
     }
-}
-
-//
-// Types
-//
-
-#[derive(Debug, Fail)]
-enum AppError {
-    // Returned in case of generic I/O error.
-    #[fail(display = "i/o error when reading/writing on the CSV file {}", _0)]
-    IOError(std::io::Error),
-
-    // Returned when the CSV deserialisation failed.
-    #[fail(display = "Deserialisation failed on a CSV row {}", _0)]
-    CsvDeserialisationError(csv::Error),
-}
-
-impl From<std::io::Error> for AppError {
-    fn from(err: std::io::Error) -> AppError {
-        AppError::IOError(err)
-    }
-}
-
-impl From<csv::Error> for AppError {
-    fn from(err: csv::Error) -> AppError {
-        AppError::CsvDeserialisationError(err)
-    }
-}
-
-type ProjectId = u32;
-type ProjectName = String;
-type Contributor = String;
-// We need a way to map external indexes with an incremental index suitable
-// for matrix manipulation, so we define this LocalMatrixIndex exactly for
-// this purpose.
-type LocalMatrixIndex = usize;
-type DependencyMatrix<N> = SparseMatrix<N>;
-type ContributionMatrix<N> = SparseMatrix<N>;
-type MaintenanceMatrix<N> = SparseMatrix<N>;
-
-#[derive(Debug, Deserialize)]
-struct DepMetaRow {
-    id: u32,
-    name: String,
-    platform: String,
-}
-
-struct DependenciesMetadata {
-    ids: HashSet<ProjectId>,
-    labels: Vec<ProjectName>,
-    project2index: HashMap<ProjectId, LocalMatrixIndex>,
-}
-
-impl DependenciesMetadata {
-    fn new() -> Self {
-        DependenciesMetadata {
-            ids: Default::default(),
-            labels: Default::default(),
-            project2index: Default::default(),
-        }
-    }
-}
-
-struct ContributionsMetadata {
-    contributors: HashSet<Contributor>,
-    contributor2index: HashMap<Contributor, LocalMatrixIndex>,
-}
-
-impl ContributionsMetadata {
-    fn new() -> Self {
-        ContributionsMetadata {
-            contributors: Default::default(),
-            contributor2index: Default::default(),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct ContribRow {
-    project_id: ProjectId,
-    contributor: String,
-    repo: String,
-    contributions: u32,
-    project_name: ProjectName,
-}
-
-#[derive(Debug, Deserialize)]
-struct DepRow {
-    from: ProjectId,
-    to: ProjectId,
 }
 
 //
@@ -233,116 +148,17 @@ where
     dense
 }
 
-/// Creates a (sparse) adjacency matrix for the dependencies.
-/// Corresponds to the "cargo-dep-adj.csv" from the Python scripts.
-fn new_dependency_adjacency_matrix<N>(
-    deps_meta: &DependenciesMetadata,
-    deps_csv: csv::Reader<File>,
-) -> Result<DependencyMatrix<N>, AppError>
-where
-    N: Num + Clone,
-{
-    let mut dep_adj: TriMat<N> = TriMatBase::new((deps_meta.ids.len(), deps_meta.ids.len()));
-
-    // Iterate through the dependencies, populating the matrix.
-    for result in deps_csv.into_records().filter_map(|e| e.ok()) {
-        let row: DepRow = result.deserialize(None)?;
-        if let (Some(from_index), Some(to_index)) = (
-            deps_meta.project2index.get(&row.from),
-            deps_meta.project2index.get(&row.to),
-        ) {
-            dep_adj.add_triplet(*from_index as usize, *to_index as usize, One::one());
-        }
-    }
-
-    Ok(dep_adj.to_csr())
-}
-
-/// Creates a (sparse) adjacency matrix for the contributions.
-/// Corresponds to the "cargo-contrib-adj.csv" from the Python scripts.
-fn new_contribution_adjacency_matrix<F, N>(
-    deps_meta: &DependenciesMetadata,
-    contribs_meta: &ContributionsMetadata,
-    contribs_csv: csv::Reader<F>,
-    mk_contribution: Box<dyn Fn(u32) -> N>,
-) -> Result<ContributionMatrix<N>, AppError>
-where
-    F: Read,
-    N: Num + Clone,
-{
-    // Creates a sparse matrix of projects x contributors
-    let mut contrib_adj: TriMat<N> =
-        TriMatBase::new((deps_meta.ids.len(), contribs_meta.contributors.len()));
-
-    for result in contribs_csv.into_records().filter_map(|e| e.ok()) {
-        let row: ContribRow = result.deserialize(None)?;
-
-        if let Some((row_ix, col_ix)) =
-            deps_meta
-                .project2index
-                .get(&row.project_id)
-                .and_then(|row_ix| {
-                    contribs_meta
-                        .contributor2index
-                        .get(&row.contributor)
-                        .map(|col| (*row_ix, *col))
-                })
-        {
-            contrib_adj.add_triplet(row_ix, col_ix, mk_contribution(row.contributions))
-        }
-    }
-
-    Ok(contrib_adj.to_csr())
-}
-
-fn new_network_matrix<N>(
-    dep_matrix: &DependencyMatrix<N>,
-    contrib_matrix: &ContributionMatrix<N>,
-    maintainer_matrix: &MaintenanceMatrix<N>,
-    hyperparams: HyperParams,
-) -> Result<SparseMatrix<N>, AppError>
-where
-    N: Num + Copy + Default + From<osrank::types::Weight> + PartialOrd + Signed,
-{
-    let contrib_t = transpose_storage(&contrib_matrix);
-    let contrib_t_norm = normalise_rows(&contrib_t);
-
-    let maintainer_t = maintainer_matrix.clone().transpose_into();
-    let maintainer_norm = normalise_rows(&maintainer_matrix);
-
-    let project_to_project = scalar_mul_mat(
-        &normalise_rows(&dep_matrix),
-        hyperparams.depend_factor.into(),
-    );
-    let project_to_account = &scalar_mul_mat(&maintainer_norm, hyperparams.maintain_factor.into())
-        + &scalar_mul_mat(
-            &normalise_rows(&contrib_matrix),
-            hyperparams.contrib_factor.into(),
-        );
-    let account_to_project =
-        &hadamard_mul(
-            scalar_mul_mat(&maintainer_t, hyperparams.maintain_prime_factor.into()),
-            &contrib_t_norm,
-        ) + &scalar_mul_mat(&contrib_t_norm, hyperparams.contrib_prime_factor.into());
-
-    let account_to_account: SparseMatrix<N> =
-        CsMat::zero((contrib_matrix.cols(), contrib_matrix.cols()));
-
-    // Join the matrixes together
-    let q1_q2 = hstack(&vec![project_to_project.view(), project_to_account.view()]);
-    let q3_q4 = hstack(&vec![account_to_project.view(), account_to_account.view()]);
-
-    Ok(normalise_rows(&vstack(&vec![q1_q2.view(), q3_q4.view()])))
-}
-
-fn debug_sparse_matrix_to_csv<N>(matrix: &CsMat<N>, out_path: &str) -> Result<(), AppError>
+fn debug_sparse_matrix_to_csv<N>(matrix: &CsMat<N>, out_path: &str) -> Result<(), CsvImportError>
 where
     N: DisplayAsF64 + Zero + Clone + Copy,
 {
     debug_dense_matrix_to_csv(&matrix.to_dense(), out_path)
 }
 
-fn debug_dense_matrix_to_csv<N>(matrix: &DenseMatrix<N>, out_path: &str) -> Result<(), AppError>
+fn debug_dense_matrix_to_csv<N>(
+    matrix: &DenseMatrix<N>,
+    out_path: &str,
+) -> Result<(), CsvImportError>
 where
     N: DisplayAsF64 + Zero + Clone + Copy,
 {
@@ -364,7 +180,7 @@ where
     Ok(())
 }
 
-fn debug_pagerank_to_csv(rank: &Rank<f64>, out_path: &str) -> Result<(), AppError> {
+fn debug_pagerank_to_csv(rank: &Rank<f64>, out_path: &str) -> Result<(), CsvImportError> {
     let mut output_csv = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -390,7 +206,7 @@ fn build_adjacency_matrix(
     deps_meta_file: &str,
     contrib_file: &str,
     _out_path: &str,
-) -> Result<(), AppError> {
+) -> Result<(), CsvImportError> {
     let deps_csv = csv::Reader::from_reader(File::open(deps_file)?);
     let deps_meta_csv = csv::Reader::from_reader(File::open(deps_meta_file)?);
     let contribs_csv_first_pass = csv::Reader::from_reader(File::open(contrib_file)?);
@@ -456,7 +272,7 @@ fn build_adjacency_matrix(
         &con_adj_matrix,
         &maintenance_matrix,
         HyperParams::default(),
-    )?;
+    );
 
     println!("assert_normalised(network_matrix)");
     assert_rows_normalised(&network_matrix, 0.0001);
@@ -493,7 +309,7 @@ fn build_adjacency_matrix(
     Ok(())
 }
 
-fn main() -> Result<(), AppError> {
+fn main() -> Result<(), CsvImportError> {
     let matches = App::new("Port of the adjacency matrix calculation from Jupyter")
         .arg(
             Arg::with_name("dependencies")
@@ -546,6 +362,8 @@ mod tests {
     use csv;
     use ndarray::arr2;
     use num_traits::{One, Zero};
+    use osrank::adjacency::new_network_matrix;
+    use osrank::importers::csv::{ContributionsMetadata, DependenciesMetadata};
     use osrank::linalg::{normalise_rows, normalise_rows_mut};
     use osrank::types::{HyperParams, Weight};
     use pretty_assertions::assert_eq;
@@ -676,7 +494,7 @@ mod tests {
         );
         let m = CsMat::csr_from_dense(arr2(&[[o, z, z], [z, o, z], [z, o, z]]).view(), z);
 
-        let network = super::new_network_matrix(&d, &c, &m, HyperParams::default()).unwrap();
+        let network = new_network_matrix(&d, &c, &m, HyperParams::default());
 
         let expected = arr2(&[
             [z, Weight::new(4, 7), z, Weight::new(3, 7), z, z],
@@ -730,7 +548,7 @@ ID,MAINTAINER,REPO,CONTRIBUTIONS,NAME
 "###,
         );
 
-        let dep_meta = super::DependenciesMetadata {
+        let dep_meta = DependenciesMetadata {
             ids: [10, 15, 7].iter().cloned().collect(),
             labels: [
                 String::from("oscoin"),
@@ -743,7 +561,7 @@ ID,MAINTAINER,REPO,CONTRIBUTIONS,NAME
             project2index: [(10, 0), (15, 1), (7, 2)].iter().cloned().collect(),
         };
 
-        let contribs = super::ContributionsMetadata {
+        let contribs = ContributionsMetadata {
             contributors: [
                 String::from("github@foo"),
                 String::from("github@bar"),

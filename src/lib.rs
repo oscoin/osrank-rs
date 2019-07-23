@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate derive_more;
 
+pub mod adjacency;
 pub mod algorithm;
 pub mod collections;
 pub mod exporters;
