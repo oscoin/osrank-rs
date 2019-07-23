@@ -32,10 +32,14 @@ type Contributor = String;
 // this purpose.
 type LocalMatrixIndex = usize;
 
+/// The `SparseMatrix` of the dependencies.
 pub type DependencyMatrix<N> = SparseMatrix<N>;
+/// The `SparseMatrix` of the contributions.
 pub type ContributionMatrix<N> = SparseMatrix<N>;
+/// The `SparseMatrix` of the maintainers.
 pub type MaintenanceMatrix<N> = SparseMatrix<N>;
 
+/// A single, deserialised row of the `{platform}_dependencies_meta.csv` file.
 #[derive(Debug, Deserialize)]
 pub struct DepMetaRow {
     pub id: u32,
@@ -85,6 +89,7 @@ impl Default for ContributionsMetadata {
     }
 }
 
+/// A single, deserialised row of the `{platform}_contributors.csv` file.
 #[derive(Debug, Deserialize)]
 pub struct ContribRow {
     pub project_id: ProjectId,
@@ -94,6 +99,7 @@ pub struct ContribRow {
     pub project_name: ProjectName,
 }
 
+/// A single, deserialised row of the `{platform}_dependencies.csv` file.
 #[derive(Debug, Deserialize)]
 pub struct DepRow {
     pub from: ProjectId,
@@ -104,12 +110,13 @@ pub struct DepRow {
 // Errors
 //
 
+/// Errors arising during the import process.
 #[derive(Debug)]
 pub enum CsvImportError {
-    // Returned in case of generic I/O error.
+    /// Returned in case of generic I/O error.
     IOError(std::io::Error),
 
-    // Returned when the CSV deserialisation failed.
+    /// Returned when the CSV deserialisation failed.
     CsvDeserialisationError(csv::Error),
 }
 
@@ -138,7 +145,42 @@ impl From<csv::Error> for CsvImportError {
     }
 }
 
-pub fn import_network<G, L>(
+/// Constructs a `Network` graph from a list of CSVs. The structure of each
+/// csv is important, and is documented below.
+///
+/// #deps_csv_file
+///
+/// This must be a csv file in this format:
+///
+/// ```
+/// FROM_ID,TO_ID
+/// 30742,31187
+/// 30742,31296
+/// [..]
+/// ```
+///
+/// #deps_meta_csv_file
+/// This must be a csv file in this format:
+///
+/// ```
+/// ID,NAME,PLATFORM
+/// 30742,acacia,Cargo
+/// 30745,aio,Cargo
+/// 30746,advapi32-sys,Cargo
+/// [..]
+/// ```
+///
+/// #contrib_csv_file
+/// This must be a csv file in this format:
+///
+/// ```
+/// ID,MAINTAINER,REPO,CONTRIBUTIONS,NAME
+/// 30742,github@aepsil0n,https://github.com/aepsil0n/acacia,118,acacia
+/// 30743,github@emk,https://github.com/emk/abort_on_panic-rs,32,abort_on_panic
+/// 30745,github@reem,https://github.com/reem/rust-aio,35,aio
+/// [..]
+/// ```
+pub fn import_network<L>(
     deps_csv_file: &Path,
     deps_meta_csv_file: &Path,
     contrib_csv_file: &Path,
