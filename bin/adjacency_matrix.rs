@@ -11,6 +11,7 @@ use failure::Fail;
 use itertools::Itertools;
 use ndarray::Array2;
 use osrank::collections::{Rank, WithLabels};
+use osrank::linalg::{hadamard_mul, normalise_rows, transpose_storage, DenseMatrix, SparseMatrix};
 use osrank::types::{HyperParams, Weight};
 use serde::Deserialize;
 use sprs::binop::{add_mat_same_storage, scalar_mul_mat};
@@ -76,8 +77,6 @@ type Contributor = String;
 // for matrix manipulation, so we define this LocalMatrixIndex exactly for
 // this purpose.
 type LocalMatrixIndex = usize;
-type SparseMatrix<N> = CsMat<N>;
-type DenseMatrix<N> = Array2<N>;
 type DependencyMatrix<N> = SparseMatrix<N>;
 type ContributionMatrix<N> = SparseMatrix<N>;
 type MaintenanceMatrix<N> = SparseMatrix<N>;
@@ -234,45 +233,6 @@ where
     dense
 }
 
-/// Normalises the rows for the input matrix.
-fn normalise_rows_mut<N>(matrix: &mut CsMat<N>)
-where
-    N: Num + Copy,
-{
-    for mut row_vec in matrix.outer_iterator_mut() {
-        let mut ixs = Vec::new();
-        let norm = row_vec.iter().fold(N::zero(), |acc, v| {
-            ixs.push(v.0);
-            acc + *(v.1)
-        });
-        if norm != N::zero() {
-            for ix in ixs {
-                row_vec[ix] = row_vec[ix] / norm;
-            }
-        }
-    }
-}
-
-/// Normalises the rows of a Matrix.
-/// N.B. It returns a brand new Matrix, therefore it performs a copy.
-/// FIXME(adn) Is there a way to yield only a (partial) view copying only
-/// the values?
-fn normalise_rows<N>(matrix: &SparseMatrix<N>) -> SparseMatrix<N>
-where
-    N: Num + Copy,
-{
-    let mut cloned = matrix.clone();
-    normalise_rows_mut(&mut cloned);
-    cloned
-}
-
-fn transpose_storage<N>(matrix: &SparseMatrix<N>) -> SparseMatrix<N>
-where
-    N: Num + Copy + Signed + PartialOrd + Default,
-{
-    CsMat::csr_from_dense(matrix.to_dense().t().view(), N::zero())
-}
-
 /// Creates a (sparse) adjacency matrix for the dependencies.
 /// Corresponds to the "cargo-dep-adj.csv" from the Python scripts.
 fn new_dependency_adjacency_matrix<N>(
@@ -300,13 +260,6 @@ where
 
 /// Creates a (sparse) adjacency matrix for the contributions.
 /// Corresponds to the "cargo-contrib-adj.csv" from the Python scripts.
-/// NOTE(adn) We need to cleanup this matrix to make sure we end up with
-/// a matrix such that:
-/// 1. The number of rows and columns is equal to the dependency matrix
-/// 2. The data occurs in the same logical order of the dependency matrix.
-///    To say this differently, if the dependency matrix lists A,B,C as its
-///    first projects, the contribution matrix will need to list A,B,C in
-///    exactly the same order, without gaps.
 fn new_contribution_adjacency_matrix<F, N>(
     deps_meta: &DependenciesMetadata,
     contribs_meta: &ContributionsMetadata,
@@ -340,15 +293,6 @@ where
     }
 
     Ok(contrib_adj.to_csr())
-}
-
-// Inefficient implementation of the Hadamard multiplication that operates
-// on the dense representation.
-fn hadamard_mul<N>(lhs: SparseMatrix<N>, rhs: &SparseMatrix<N>) -> SparseMatrix<N>
-where
-    N: Zero + PartialOrd + Signed + Clone,
-{
-    CsMat::csr_from_dense((lhs.to_dense() * rhs.to_dense()).view(), Zero::zero())
 }
 
 fn new_network_matrix<N>(
@@ -602,6 +546,7 @@ mod tests {
     use csv;
     use ndarray::arr2;
     use num_traits::{One, Zero};
+    use osrank::linalg::{normalise_rows, normalise_rows_mut};
     use osrank::types::{HyperParams, Weight};
     use pretty_assertions::assert_eq;
     use sprs::{CsMat, TriMat, TriMatBase};
@@ -614,7 +559,7 @@ mod tests {
             0.0,
         );
 
-        super::normalise_rows_mut(&mut input);
+        normalise_rows_mut(&mut input);
 
         let expected = arr2(&[
             [0.16666666666666666, 0.3333333333333333, 0.5],
@@ -701,7 +646,7 @@ mod tests {
 
         // Transpose the matrix and normalise it.
 
-        let actual = super::normalise_rows(&super::transpose_storage(&c));
+        let actual = normalise_rows(&super::transpose_storage(&c));
 
         let expected = arr2(&[
             [o, z, z],
