@@ -142,8 +142,7 @@ mod tests {
     use super::*;
     use crate::protocol_traits::ledger::MockLedger;
     use crate::types::{
-        AccountAttributes, Artifact, DampingFactors, Dependency, HyperParams, Network,
-        ProjectAttributes, Weight,
+        AccountAttributes, Artifact, Dependency, Network, ProjectAttributes, Weight,
     };
     use num_traits::Zero;
 
@@ -237,10 +236,7 @@ mod tests {
             Dependency::Influence(Weight::new(1, 1).as_f64().unwrap()),
         );
 
-        let mock_ledger = MockLedger {
-            params: HyperParams::default(),
-            factors: DampingFactors::default(),
-        };
+        let mock_ledger = MockLedger::default();
 
         assert_eq!(network.edge_count(), 11);
         assert_eq!(

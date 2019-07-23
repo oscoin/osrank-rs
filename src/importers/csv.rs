@@ -16,9 +16,7 @@ use num_traits::{Num, One, Zero};
 use serde::Deserialize;
 use sprs::{CsMat, TriMat, TriMatBase};
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::io::Read;
-use std::path::Path;
+use std::io::{Read, Seek};
 
 //
 // Types
@@ -152,7 +150,7 @@ impl From<csv::Error> for CsvImportError {
 ///
 /// This must be a csv file in this format:
 ///
-/// ```
+/// ```ignore,no_run
 /// FROM_ID,TO_ID
 /// 30742,31187
 /// 30742,31296
@@ -162,7 +160,7 @@ impl From<csv::Error> for CsvImportError {
 /// #deps_meta_csv_file
 /// This must be a csv file in this format:
 ///
-/// ```
+/// ```ignore,no_run
 /// ID,NAME,PLATFORM
 /// 30742,acacia,Cargo
 /// 30745,aio,Cargo
@@ -173,27 +171,25 @@ impl From<csv::Error> for CsvImportError {
 /// #contrib_csv_file
 /// This must be a csv file in this format:
 ///
-/// ```
+/// ```ignore,no_run
 /// ID,MAINTAINER,REPO,CONTRIBUTIONS,NAME
 /// 30742,github@aepsil0n,https://github.com/aepsil0n/acacia,118,acacia
 /// 30743,github@emk,https://github.com/emk/abort_on_panic-rs,32,abort_on_panic
 /// 30745,github@reem,https://github.com/reem/rust-aio,35,aio
 /// [..]
 /// ```
-pub fn import_network<L>(
-    deps_csv_file: &Path,
-    deps_meta_csv_file: &Path,
-    contrib_csv_file: &Path,
+pub fn import_network<L, R>(
+    deps_csv: csv::Reader<R>,
+    deps_meta_csv: csv::Reader<R>,
+    mut contribs_csv: csv::Reader<R>,
     //TODO(and) We want to consider maintainers at some point.
-    _maintainers_csv_file: Option<&Path>,
+    _maintainers_csv_file: Option<csv::Reader<R>>,
     ledger_view: &L,
 ) -> Result<Network<f64>, CsvImportError>
 where
     L: LedgerView,
+    R: Read + Seek,
 {
-    let deps_csv = csv::Reader::from_reader(File::open(deps_csv_file)?);
-    let deps_meta_csv = csv::Reader::from_reader(File::open(deps_meta_csv_file)?);
-    let contribs_csv_first_pass = csv::Reader::from_reader(File::open(contrib_csv_file)?);
     let mut deps_meta = DependenciesMetadata::new();
     let mut contribs_meta = ContributionsMetadata::new();
 
@@ -220,10 +216,7 @@ where
 
     // Iterate once over the contributions and build a matrix where
     // rows are the project names and columns the (unique) contributors.
-    for result in contribs_csv_first_pass
-        .into_records()
-        .filter_map(|e| e.ok())
-    {
+    for result in contribs_csv.records().filter_map(|e| e.ok()) {
         let row: ContribRow = result.deserialize(None)?;
         let c = row.contributor.clone();
         let contrib_id = row.contributor.clone();
@@ -241,8 +234,8 @@ where
         }
     }
 
-    //"Rewind" the file as we need a second pass.
-    let contribs_csv = csv::Reader::from_reader(File::open(contrib_csv_file)?);
+    // "Rewind" the csv reader.
+    (&mut contribs_csv).seek(csv::Position::new())?;
 
     let dep_adj_matrix = new_dependency_adjacency_matrix(&deps_meta, deps_csv)?;
     let con_adj_matrix = new_contribution_adjacency_matrix(
@@ -277,12 +270,13 @@ where
 
 /// Creates a (sparse) adjacency matrix for the dependencies.
 /// Corresponds to the "cargo-dep-adj.csv" from the Python scripts.
-pub fn new_dependency_adjacency_matrix<N>(
+pub fn new_dependency_adjacency_matrix<N, R>(
     deps_meta: &DependenciesMetadata,
-    deps_csv: csv::Reader<File>,
+    deps_csv: csv::Reader<R>,
 ) -> Result<DependencyMatrix<N>, CsvImportError>
 where
     N: Num + Clone,
+    R: Read,
 {
     let mut dep_adj: TriMat<N> = TriMatBase::new((deps_meta.ids.len(), deps_meta.ids.len()));
 
@@ -335,4 +329,65 @@ where
     }
 
     Ok(contrib_adj.to_csr())
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate tempfile;
+
+    use crate::protocol_traits::ledger::MockLedger;
+    use std::io::Write;
+    use tempfile::tempfile;
+
+    #[test]
+    fn csv_network_import_works() {
+        let deps_csv = String::from(
+            r###"
+FROM_ID,TO_ID
+0,1
+2,0
+2,1
+"###,
+        );
+
+        let mut deps_file = tempfile().unwrap();
+        deps_file.write_all(deps_csv.as_bytes()).unwrap();
+
+        let deps_csv_meta = String::from(
+            r###"
+ID,NAME,PLATFORM
+0,foo,Cargo
+1,bar,Cargo
+2,baz,Cargo
+"###,
+        );
+
+        let mut meta_file = tempfile().unwrap();
+        meta_file.write_all(deps_csv_meta.as_bytes()).unwrap();
+
+        let contribs_csv = String::from(
+            r###"
+ID,MAINTAINER,REPO,CONTRIBUTIONS,NAME
+0,github@john,https://github.com/foo/foo-rs,100,foo
+1,github@tom,https://github.com/bar/bar-rs,30,bar
+2,github@tom,https://github.com/baz/baz-rs,60,baz
+2,github@alice,https://github.com/baz/baz-rs,20,baz
+"###,
+        );
+
+        let mut contrib_file = tempfile().unwrap();
+        contrib_file.write_all(contribs_csv.as_bytes()).unwrap();
+
+        let mock_ledger = MockLedger::default();
+
+        let network = super::import_network(
+            csv::Reader::from_reader(deps_file),
+            csv::Reader::from_reader(meta_file),
+            csv::Reader::from_reader(contrib_file),
+            None,
+            &mock_ledger,
+        );
+
+        assert_eq!(network.is_ok(), true);
+    }
 }
