@@ -102,10 +102,10 @@ where
     for node_idx in network_view.node_ids() {
         let total_walks = random_walks.len();
         let node_visits = &random_walks.count_visits(node_idx);
-        let rank = Fraction::from(ledger_view.get_damping_factors().project)
+        let rank = Fraction::from(1.0 - ledger_view.get_damping_factors().project)
             * Osrank::new(
                 *node_visits as u32,
-                (total_walks * network_view.node_ids().count()) as u32,
+                total_walks as u32,
             );
 
         network_view.update_node_metadata(
