@@ -10,7 +10,7 @@ use crate::adjacency::new_network_matrix;
 use crate::linalg::SparseMatrix;
 use crate::protocol_traits::graph::Graph;
 use crate::protocol_traits::ledger::LedgerView;
-use crate::types::{AccountAttributes, Artifact, Dependency, Network, ProjectAttributes};
+use crate::types::{ArtifactType, DependencyType, Network};
 use core::fmt;
 use num_traits::{Num, One, Zero};
 use serde::Deserialize;
@@ -208,10 +208,12 @@ where
             .insert(row.id, deps_meta.ids.len() - 1);
 
         // Add the projects as nodes in the graph.
-        graph.add_node(Artifact::Project(ProjectAttributes {
-            id: prj_id,
-            osrank: Zero::zero(),
-        }));
+        graph.add_node(
+            prj_id,
+            ArtifactType::Project {
+                osrank: Zero::zero(),
+            },
+        );
     }
 
     // Iterate once over the contributions and build a matrix where
@@ -227,10 +229,12 @@ where
                 .contributor2index
                 .insert(c, contribs_meta.contributors.len() - 1);
 
-            graph.add_node(Artifact::Account(AccountAttributes {
-                id: contrib_id.to_string(),
-                osrank: Zero::zero(),
-            }));
+            graph.add_node(
+                contrib_id.to_string(),
+                ArtifactType::Account {
+                    osrank: Zero::zero(),
+                },
+            );
         }
     }
 
@@ -255,12 +259,20 @@ where
         &ledger_view.get_hyperparams(),
     );
 
+    let mut current_edge_id = 0;
+
     //FIXME(adn) Here we have a precision problem: we _have_ to convert the
     //weights from fractions to f64 to avoid arithmetic overflows, but yet here
     //it's nice to work with fractions.
     for (source, row_vec) in network_matrix.outer_iterator().enumerate() {
         for (target, weight) in row_vec.iter().enumerate() {
-            graph.add_edge(source, target, Dependency::Influence(*weight.1))
+            graph.add_edge(
+                &source.to_string(),
+                &target.to_string(),
+                current_edge_id,
+                DependencyType::Influence(*weight.1),
+            );
+            current_edge_id += 1;
         }
     }
 
@@ -340,6 +352,8 @@ mod tests {
     use tempfile::tempfile;
 
     #[test]
+    /// This test setups the same example graph in the basic model PDF
+    /// and check the result is what we expect.
     fn csv_network_import_works() {
         let deps_csv = String::from(
             r###"

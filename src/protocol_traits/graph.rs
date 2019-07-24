@@ -8,6 +8,26 @@ use std::ops::Range;
 use crate::protocol_traits::storage::KeyValueStorage;
 use rand::SeedableRng;
 
+/// The notion of a generic `GraphObject` in a `Graph`, which can be
+/// either a node or an edge.
+pub trait GraphObject {
+    /// The unique identifier for this object.
+    type Id;
+    /// The metadata attached to this object.
+    type Metadata;
+
+    fn id(&self) -> &Self::Id;
+
+    fn get_metadata(&self) -> &Self::Metadata;
+    fn set_metadata(&mut self, v: Self::Metadata);
+}
+
+/// Useful type alias for a `GraphObject`'s `Id`.
+pub type Id<N> = <N as GraphObject>::Id;
+
+/// Useful type alias for a `GraphObject`'s `Metadata`.
+pub type Metadata<N> = <N as GraphObject>::Metadata;
+
 /// An trait abstracting over a `GraphAPI`.
 ///
 /// This trait is developed here as a quick proof-of-concept to break any
@@ -19,17 +39,11 @@ use rand::SeedableRng;
 pub trait GraphAPI<G, R>
 where
     R: SeedableRng,
-    G: Graph<NodeMetadata = Self::NodeMetadata, EdgeMetadata = Self::EdgeMetadata>,
+    G: Graph,
 {
     /// We will likely need some state to generate the seed from, but
     /// this is not spec-ed out yet.
     type SomeState;
-
-    /// Metadata a node might have.
-    type NodeMetadata;
-
-    /// Metadata an edge might have.
-    type EdgeMetadata;
 
     /// A type representing unique identifier within the system.
     type Id;
@@ -38,7 +52,7 @@ where
     type Storage: KeyValueStorage<Key = Self::Id, Value = G>;
 
     /// Adds a new node to a particular layer, given its metadata.
-    fn add_node(&mut self, layer_id: &Self::Id, node_metadata: Self::NodeMetadata);
+    fn add_node(&mut self, layer_id: &Self::Id, node_metadata: Metadata<G::Node>);
 
     /// Adds a new edge to a particular layer, given its metadata, the source
     /// and the target.
@@ -47,7 +61,7 @@ where
         layer_id: &Self::Id,
         source: &Self::Id,
         target: &Self::Id,
-        edge_metadata: Self::EdgeMetadata,
+        edge_metadata: Metadata<G::Edge>,
     );
 
     /// Returns the neighbours for a node, given its `NodeId` and the
@@ -55,8 +69,8 @@ where
     fn neighbours(
         &self,
         layer_id: &Self::Id,
-        node: &G::NodeId,
-    ) -> Vec<EdgeReference<Self::Id, Self::Id>>;
+        node: &Metadata<G::Node>,
+    ) -> EdgeReferences<Self::Id, Self::Id>;
 
     /// Given an initial `SomeState`' returns a random-yet-predicable seed
     /// to be used by the _Osrank_ algorithm.
@@ -70,14 +84,14 @@ where
         &self,
         layer_id: &Self::Id,
         node_id: &Self::Id,
-    ) -> Option<Self::NodeMetadata>;
+    ) -> Option<&Metadata<G::Node>>;
 
     /// Lookups the _metadata_ for an edge in a layer, if any.
     fn lookup_edge_metadata(
         &self,
         layer_id: &Self::Id,
         edge_id: &Self::Id,
-    ) -> Option<Self::EdgeMetadata>;
+    ) -> Option<&Metadata<G::Edge>>;
 
     /// Replaces the _metadata_ associated to the input `NodeId`, given the
     /// layer where its located.
@@ -89,72 +103,93 @@ where
 }
 
 pub trait Graph: Default {
-    type NodeId: Copy;
-    type EdgeId: Copy;
-    type NodeMetadata;
-    type EdgeMetadata;
+    /// The "userland" `Id` associated to a `Node`. It allows users and third
+    /// party apps to assign a `Node` any arbitrary Id while being able to query
+    /// the `Graph` with such `Id`.
+    type Node: GraphObject;
+    type Edge: GraphObject;
 
     /// Adds a new node to the graph, given its metadata.
-    fn add_node(&mut self, node_metadata: Self::NodeMetadata);
+    fn add_node(&mut self, node_id: Id<Self::Node>, node_metadata: Metadata<Self::Node>);
 
     /// Adds a new edge to the graph, given its metadata, the source
     /// and the target.
     fn add_edge(
         &mut self,
-        source: Self::NodeId,
-        target: Self::NodeId,
-        edge_metadata: Self::EdgeMetadata,
+        source: &Id<Self::Node>,
+        target: &Id<Self::Node>,
+        edge_id: Id<Self::Edge>,
+        edge_metadata: Metadata<Self::Edge>,
     );
 
     /// Returns the neighbours for a node, given its `NodeId`.
-    fn neighbours(&self, node_id: &Self::NodeId) -> Vec<EdgeReference<Self::NodeId, Self::EdgeId>>;
+    fn neighbours(
+        &self,
+        node_id: &Id<Self::Node>,
+    ) -> EdgeReferences<Id<Self::Node>, Id<Self::Edge>>;
 
     /// Lookups the _metadata_ for a node, if any.
-    fn lookup_node_metadata(&self, node_id: &Self::NodeId) -> Option<&Self::NodeMetadata>;
+    fn lookup_node_metadata(&self, node_id: &Id<Self::Node>) -> Option<&Metadata<Self::Node>>;
 
     /// Lookups the _metadata_ for an edge, if any.
-    fn lookup_edge_metadata(&self, edge_id: &Self::EdgeId) -> Option<&Self::EdgeMetadata>;
+    fn lookup_edge_metadata(&self, edge_id: &Id<Self::Edge>) -> Option<&Metadata<Self::Edge>>;
 
     /// Returns an iterator over the node ids in the `Graph`.
-    fn node_ids(&self) -> NodeIds<Self::NodeId>;
+    fn nodes(&self) -> Nodes<Self::Node>;
+
+    fn nodes_mut(&mut self) -> NodesMut<Self::Node>;
 
     /// Returns the number of edges for this `Graph`.
     fn edge_count(&self) -> usize;
 
     /// Replaces the _metadata_ associated to the input `NodeId`.
-    fn set_node_metadata(&mut self, node_id: &Self::NodeId, new: Self::NodeMetadata);
+    fn set_node_metadata(&mut self, node_id: &Id<Self::Node>, new: Metadata<Self::Node>);
 
     /// Replaces the _metadata_ associated to the input `EdgeId`.
-    fn update_node_metadata(
-        &mut self,
-        node_id: &Self::NodeId,
-        update_fn: Box<FnMut(&mut Self::NodeMetadata) -> ()>,
-    );
-
-    /// Replaces the _metadata_ associated to the input `EdgeId`.
-    fn set_edge_metadata(&mut self, edge_id: &Self::EdgeId, new: Self::EdgeMetadata);
+    fn set_edge_metadata(&mut self, edge_id: &Id<Self::Edge>, new: Metadata<Self::Edge>);
 }
 
-pub struct EdgeReference<NodeId, EdgeId> {
-    pub source: NodeId,
-    pub target: NodeId,
-    pub id: EdgeId,
+pub struct EdgeReference<'a, NodeId, EdgeId> {
+    pub source: &'a NodeId,
+    pub target: &'a NodeId,
+    pub id: &'a EdgeId,
 }
 
-pub struct NodeIds<I> {
+pub type EdgeReferences<'a, N, E> = Vec<EdgeReference<'a, N, E>>;
+
+pub struct Nodes<'a, N: 'a> {
     pub range: Range<usize>,
-    pub to_node_id: Box<Fn(usize) -> I>,
+    pub to_node_id: Box<(Fn(usize) -> &'a N) + 'a>,
 }
 
-impl<I> Iterator for NodeIds<I> {
-    type Item = I;
+pub struct NodesMut<'a, N: 'a> {
+    pub range: std::vec::IntoIter<&'a mut N>,
+    // pub to_node_id: Box<(FnMut(usize) -> &'a mut N) + 'a>,
+}
 
-    fn next(&mut self) -> Option<I> {
+impl<'a, N: 'a> Iterator for Nodes<'a, N> {
+    type Item = &'a N;
+
+    fn next(&mut self) -> Option<Self::Item> {
         let f = &self.to_node_id;
 
         match self.range.next() {
             None => None,
             Some(v) => Some(f(v)),
         }
+    }
+}
+
+impl<'a, N: 'a> Iterator for NodesMut<'a, N> {
+    type Item = &'a mut N;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.range.next()
+        //let f = &mut self.to_node_id;
+
+        //match self.range.next() {
+        //    None => None,
+        //    Some(v) => Some(f(v)),
+        //}
     }
 }
