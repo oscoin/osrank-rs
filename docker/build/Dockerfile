@@ -13,6 +13,6 @@ RUN cargo install sccache \
     && rm -rf /usr/local/cargo/registry \
     && rm /usr/local/cargo/.package-cache
 
-# Setup defaults for sccache
+# Setup defaults for caching
 VOLUME /cache
-ENV SCCACHE_DIR=/cache/sccache RUSTC_WRAPPER=sccache
+ENV SCCACHE_DIR=/cache/sccache RUSTC_WRAPPER=sccache CARGO_HOME=/cache/cargo
