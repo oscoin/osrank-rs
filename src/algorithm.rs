@@ -16,19 +16,17 @@ use rand::Rng;
 pub enum OsrankError {}
 
 #[derive(Debug)]
-// TODO(adn) We shouldn't copy here, but rather have
-// a `network_view: &'a G`.
-pub struct WalkResult<G, I> {
-    network_view: G,
+pub struct WalkResult<'a, G, I> {
+    network_view: &'a G,
     walks: RandomWalks<I>,
 }
 
 pub fn random_walk<'a, L, G>(
     seed_set: Option<SeedSet>,
-    network: &G,
+    network: &'a G,
     ledger_view: &L,
     iter: i32,
-) -> Result<WalkResult<G, G::NodeId>, OsrankError>
+) -> Result<WalkResult<'a, G, G::NodeId>, OsrankError>
 where
     L: LedgerView,
     G: Graph<EdgeMetadata = Dependency>,
@@ -67,9 +65,8 @@ where
                 }
             }
 
-            // TODO return actual NetworkView
             let res = WalkResult {
-                network_view: G::default(),
+                network_view: network,
                 walks,
             };
 
@@ -81,13 +78,32 @@ where
 /// Naive version of the algorithm that given a full Network and a precomputed
 /// set W of random walks, iterates over each edge of the Network and computes
 /// the osrank.
-// pub fn osrank_naive(seed_set: SeedSet, network: &mut Network) -> Result<(), OsrankError> {
-//     // Phase1, rank the network and produce a NetworkView.
-//     let phase1 = random_walk(Some(seed_set), &NetworkView::from_network(network))?;
-//     // Phase2, compute the osrank only on the NetworkView
-//     let mut phase2 = random_walk(None, &phase1.network_view)?;
-//     rank_network(&phase2.walks, &mut phase2.network_view)
-// }
+pub fn osrank_naive<L, G>(
+    seed_set: Option<SeedSet>,
+    network: &mut G,
+    ledger_view: &L,
+    iter: i32,
+) -> Result<(), OsrankError>
+where
+    L: LedgerView,
+    G: Graph<NodeMetadata = Artifact, EdgeMetadata = Dependency>,
+    G::NodeId: PartialEq,
+{
+    match seed_set {
+        Some(_) => {
+            // Phase1, rank the network and produce a NetworkView.
+            let phase1 = random_walk(seed_set, &*network, ledger_view, iter)?;
+            // Phase2, compute the osrank only on the NetworkView
+            let phase2 = random_walk(None, &*phase1.network_view, ledger_view, iter)?;
+            rank_network(&phase2.walks, &mut *network, ledger_view)
+        },
+        None => {
+            // Compute osrank on the full NetworkView
+            let create_walks = random_walk(None, &*network, ledger_view, iter)?;
+            rank_network(&create_walks.walks, &mut *network, ledger_view)
+        }
+    }
+}
 
 pub fn rank_network<L, G>(
     random_walks: &RandomWalks<G::NodeId>,
@@ -177,9 +193,8 @@ mod tests {
         };
 
         assert_eq!(network.edge_count(), 11);
-        let walked = random_walk(None, &network, &mock_ledger, 10).unwrap();
         assert_eq!(
-            rank_network(&walked.walks, &mut network, &mock_ledger).unwrap(),
+            osrank_naive(None, &mut network, &mock_ledger, 10).unwrap(),
             ()
         );
     }
