@@ -276,7 +276,7 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum DependencyType<W> {
     Contrib(W),
     ContribPrime(W),

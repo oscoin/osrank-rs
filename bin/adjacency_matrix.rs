@@ -216,6 +216,7 @@ fn build_adjacency_matrix(
 
     let mut deps_meta = DependenciesMetadata::new();
     let mut contribs_meta = ContributionsMetadata::new();
+    let mut contrib_rows = Vec::default();
 
     // Iterate once over the dependencies metadata and store the name and id.
     // We need to maintain some sort of mapping between the order of visit
@@ -237,14 +238,12 @@ fn build_adjacency_matrix(
     {
         let row: ContribRow = result.deserialize(None)?;
         let c = row.contributor.clone();
-        contribs_meta.contributors.insert(row.contributor);
+        contribs_meta.contributors.insert(row.contributor.clone());
         contribs_meta
             .contributor2index
             .insert(c, contribs_meta.contributors.len() - 1);
+        contrib_rows.push(row);
     }
-
-    //"Rewind" the file as we need a second pass.
-    let contribs_csv = csv::Reader::from_reader(File::open(contrib_file)?);
 
     //TODO(adn) For now the maintenance matrix is empty.
 
@@ -256,12 +255,8 @@ fn build_adjacency_matrix(
         dep_adj_matrix.cols()
     );
     println!("Assembling the contribution matrix...");
-    let con_adj_matrix = new_contribution_adjacency_matrix(
-        &deps_meta,
-        &contribs_meta,
-        contribs_csv,
-        Box::new(f64::from),
-    )?;
+    let con_adj_matrix =
+        new_contribution_adjacency_matrix(&deps_meta, &contribs_meta, Box::new(f64::from))?;
     println!(
         "Generated a matrix of {}x{}",
         con_adj_matrix.rows(),
@@ -362,11 +357,10 @@ fn main() -> Result<(), CsvImportError> {
 
 #[cfg(test)]
 mod tests {
-    use csv;
     use ndarray::arr2;
     use num_traits::{One, Zero};
     use osrank::adjacency::new_network_matrix;
-    use osrank::importers::csv::{ContributionsMetadata, DependenciesMetadata};
+    use osrank::importers::csv::{ContribRow, ContributionsMetadata, DependenciesMetadata};
     use osrank::linalg::{hadamard_mul, normalise_rows, normalise_rows_mut};
     use osrank::types::{HyperParams, Weight};
     use pretty_assertions::assert_eq;
@@ -542,15 +536,6 @@ mod tests {
     // * baz contributes only to osrank;
     // * The radicle project has no contributions.
     fn test_contribution_matrix() {
-        let contrib_csv: String = String::from(
-            r###"
-ID,MAINTAINER,REPO,CONTRIBUTIONS,NAME
-10,github@foo,https://github.com/oscoin/oscoin,118,oscoin
-10,github@bar,https://github.com/oscoin/ocoin,32,oscoin
-15,github@baz,https://github.com/oscoin/osrank,10,osrank
-"###,
-        );
-
         let dep_meta = DependenciesMetadata {
             ids: [10, 15, 7].iter().cloned().collect(),
             labels: [
@@ -565,6 +550,29 @@ ID,MAINTAINER,REPO,CONTRIBUTIONS,NAME
         };
 
         let contribs = ContributionsMetadata {
+            rows: vec![
+                ContribRow {
+                    project_id: 10,
+                    contributor: String::from("github@foo"),
+                    repo: String::from("https://github.com/oscoin/oscoin"),
+                    contributions: 118,
+                    project_name: String::from("oscoin"),
+                },
+                ContribRow {
+                    project_id: 10,
+                    contributor: String::from("github@bar"),
+                    repo: String::from("https://github.com/oscoin/oscoin"),
+                    contributions: 32,
+                    project_name: String::from("oscoin"),
+                },
+                ContribRow {
+                    project_id: 15,
+                    contributor: String::from("github@baz"),
+                    repo: String::from("https://github.com/osrank/osrank"),
+                    contributions: 10,
+                    project_name: String::from("osank"),
+                },
+            ],
             contributors: [
                 String::from("github@foo"),
                 String::from("github@bar"),
@@ -583,14 +591,9 @@ ID,MAINTAINER,REPO,CONTRIBUTIONS,NAME
             .collect(),
         };
 
-        let contribs_records = csv::ReaderBuilder::new()
-            .flexible(true)
-            .from_reader(contrib_csv.as_bytes());
-
         let actual = super::new_contribution_adjacency_matrix(
             &dep_meta,
             &contribs,
-            contribs_records,
             Box::new(|c| Weight::new(c, 1)),
         )
         .unwrap();

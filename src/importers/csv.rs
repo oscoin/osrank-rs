@@ -10,7 +10,7 @@ use crate::adjacency::new_network_matrix;
 use crate::linalg::SparseMatrix;
 use crate::protocol_traits::graph::Graph;
 use crate::protocol_traits::ledger::LedgerView;
-use crate::types::{ArtifactType, DependencyType, Network};
+use crate::types::{Artifact, ArtifactType, Dependency, DependencyType};
 use core::fmt;
 use num_traits::{Num, One, Zero};
 use serde::Deserialize;
@@ -68,6 +68,7 @@ impl Default for DependenciesMetadata {
 }
 
 pub struct ContributionsMetadata {
+    pub rows: Vec<ContribRow>,
     pub contributors: HashSet<Contributor>,
     pub contributor2index: HashMap<Contributor, LocalMatrixIndex>,
 }
@@ -75,6 +76,7 @@ pub struct ContributionsMetadata {
 impl ContributionsMetadata {
     pub fn new() -> Self {
         ContributionsMetadata {
+            rows: Vec::default(),
             contributors: Default::default(),
             contributor2index: Default::default(),
         }
@@ -178,22 +180,27 @@ impl From<csv::Error> for CsvImportError {
 /// 30745,github@reem,https://github.com/reem/rust-aio,35,aio
 /// [..]
 /// ```
-pub fn import_network<L, R>(
+pub fn import_network<G, L, R>(
     deps_csv: csv::Reader<R>,
     deps_meta_csv: csv::Reader<R>,
     mut contribs_csv: csv::Reader<R>,
     //TODO(and) We want to consider maintainers at some point.
     _maintainers_csv_file: Option<csv::Reader<R>>,
     ledger_view: &L,
-) -> Result<Network<f64>, CsvImportError>
+) -> Result<G, CsvImportError>
 where
     L: LedgerView,
     R: Read + Seek,
+    G: Graph<Node = Artifact<String>, Edge = Dependency<usize, f64>>,
 {
     let mut deps_meta = DependenciesMetadata::new();
     let mut contribs_meta = ContributionsMetadata::new();
 
-    let mut graph = Network::default();
+    let mut graph = G::default();
+
+    // Stores the global mapping between matrix indexes and node names,
+    // which includes projects & accounts..
+    let mut index2id: HashMap<usize, String> = HashMap::default();
 
     // Iterate once over the dependencies metadata and store the name and id.
     // We need to maintain some sort of mapping between the order of visit
@@ -206,6 +213,7 @@ where
         deps_meta
             .project2index
             .insert(row.id, deps_meta.ids.len() - 1);
+        index2id.insert(index2id.len(), prj_id.clone());
 
         // Add the projects as nodes in the graph.
         graph.add_node(
@@ -216,6 +224,8 @@ where
         );
     }
 
+    println!("{:#?}", index2id);
+
     // Iterate once over the contributions and build a matrix where
     // rows are the project names and columns the (unique) contributors.
     for result in contribs_csv.records().filter_map(|e| e.ok()) {
@@ -224,10 +234,12 @@ where
         let contrib_id = row.contributor.clone();
 
         if contribs_meta.contributors.get(&row.contributor).is_none() {
-            contribs_meta.contributors.insert(row.contributor);
+            contribs_meta.contributors.insert(row.contributor.clone());
             contribs_meta
                 .contributor2index
                 .insert(c, contribs_meta.contributors.len() - 1);
+
+            index2id.insert(index2id.len(), contrib_id.to_string().clone());
 
             graph.add_node(
                 contrib_id.to_string(),
@@ -236,18 +248,15 @@ where
                 },
             );
         }
+
+        contribs_meta.rows.push(row)
     }
 
-    // "Rewind" the csv reader.
-    (&mut contribs_csv).seek(csv::Position::new())?;
+    println!("{:#?}", index2id);
 
     let dep_adj_matrix = new_dependency_adjacency_matrix(&deps_meta, deps_csv)?;
-    let con_adj_matrix = new_contribution_adjacency_matrix(
-        &deps_meta,
-        &contribs_meta,
-        contribs_csv,
-        Box::new(f64::from),
-    )?;
+    let con_adj_matrix =
+        new_contribution_adjacency_matrix(&deps_meta, &contribs_meta, Box::new(f64::from))?;
 
     //FIXME(adn) For now the maintenance matrix is empty.
     let maintainers_matrix = CsMat::zero((dep_adj_matrix.rows(), con_adj_matrix.cols()));
@@ -267,8 +276,8 @@ where
     for (source, row_vec) in network_matrix.outer_iterator().enumerate() {
         for (target, weight) in row_vec.iter().enumerate() {
             graph.add_edge(
-                &source.to_string(),
-                &target.to_string(),
+                &index2id.get(&source).unwrap(),
+                &index2id.get(&target).unwrap(),
                 current_edge_id,
                 DependencyType::Influence(*weight.1),
             );
@@ -308,23 +317,19 @@ where
 
 /// Creates a (sparse) adjacency matrix for the contributions.
 /// Corresponds to the "cargo-contrib-adj.csv" from the Python scripts.
-pub fn new_contribution_adjacency_matrix<F, N>(
+pub fn new_contribution_adjacency_matrix<N>(
     deps_meta: &DependenciesMetadata,
     contribs_meta: &ContributionsMetadata,
-    contribs_csv: csv::Reader<F>,
     mk_contribution: Box<dyn Fn(u32) -> N>,
 ) -> Result<ContributionMatrix<N>, CsvImportError>
 where
-    F: Read,
     N: Num + Clone,
 {
     // Creates a sparse matrix of projects x contributors
     let mut contrib_adj: TriMat<N> =
         TriMatBase::new((deps_meta.ids.len(), contribs_meta.contributors.len()));
 
-    for result in contribs_csv.into_records().filter_map(|e| e.ok()) {
-        let row: ContribRow = result.deserialize(None)?;
-
+    for row in contribs_meta.rows.iter() {
         if let Some((row_ix, col_ix)) =
             deps_meta
                 .project2index
@@ -345,10 +350,14 @@ where
 
 #[cfg(test)]
 mod tests {
+    extern crate num_traits;
     extern crate tempfile;
 
+    use crate::protocol_traits::graph::Graph;
     use crate::protocol_traits::ledger::MockLedger;
-    use std::io::Write;
+    use crate::types::{ArtifactType, DependencyType, Network};
+    use num_traits::Zero;
+    use std::io::{Seek, Write};
     use tempfile::tempfile;
 
     #[test]
@@ -356,8 +365,7 @@ mod tests {
     /// and check the result is what we expect.
     fn csv_network_import_works() {
         let deps_csv = String::from(
-            r###"
-FROM_ID,TO_ID
+            r###"FROM_ID,TO_ID
 0,1
 2,0
 2,1
@@ -366,10 +374,10 @@ FROM_ID,TO_ID
 
         let mut deps_file = tempfile().unwrap();
         deps_file.write_all(deps_csv.as_bytes()).unwrap();
+        deps_file.seek(std::io::SeekFrom::Start(0)).unwrap();
 
         let deps_csv_meta = String::from(
-            r###"
-ID,NAME,PLATFORM
+            r###"ID,NAME,PLATFORM
 0,foo,Cargo
 1,bar,Cargo
 2,baz,Cargo
@@ -378,10 +386,10 @@ ID,NAME,PLATFORM
 
         let mut meta_file = tempfile().unwrap();
         meta_file.write_all(deps_csv_meta.as_bytes()).unwrap();
+        meta_file.seek(std::io::SeekFrom::Start(0)).unwrap();
 
         let contribs_csv = String::from(
-            r###"
-ID,MAINTAINER,REPO,CONTRIBUTIONS,NAME
+            r###"ID,MAINTAINER,REPO,CONTRIBUTIONS,NAME
 0,github@john,https://github.com/foo/foo-rs,100,foo
 1,github@tom,https://github.com/bar/bar-rs,30,bar
 2,github@tom,https://github.com/baz/baz-rs,60,baz
@@ -391,17 +399,35 @@ ID,MAINTAINER,REPO,CONTRIBUTIONS,NAME
 
         let mut contrib_file = tempfile().unwrap();
         contrib_file.write_all(contribs_csv.as_bytes()).unwrap();
+        contrib_file.seek(std::io::SeekFrom::Start(0)).unwrap();
 
         let mock_ledger = MockLedger::default();
 
-        let network = super::import_network(
-            csv::Reader::from_reader(deps_file),
-            csv::Reader::from_reader(meta_file),
-            csv::Reader::from_reader(contrib_file),
+        let network: Network<f64> = super::import_network(
+            csv::ReaderBuilder::new()
+                .flexible(true)
+                .from_reader(deps_file),
+            csv::ReaderBuilder::new()
+                .flexible(true)
+                .from_reader(meta_file),
+            csv::ReaderBuilder::new()
+                .flexible(true)
+                .from_reader(contrib_file),
             None,
             &mock_ledger,
+        )
+        .unwrap_or_else(|e| panic!("returned unexpected error: {}", e));
+
+        assert_eq!(
+            network.lookup_node_metadata(&String::from("foo")),
+            Some(&ArtifactType::Project {
+                osrank: Zero::zero()
+            }),
         );
 
-        assert_eq!(network.is_ok(), true);
+        assert_eq!(
+            network.lookup_edge_metadata(&0),
+            Some(&DependencyType::Influence(0.8)),
+        )
     }
 }
