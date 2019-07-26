@@ -224,8 +224,6 @@ where
         );
     }
 
-    println!("{:#?}", index2id);
-
     // Iterate once over the contributions and build a matrix where
     // rows are the project names and columns the (unique) contributors.
     for result in contribs_csv.records().filter_map(|e| e.ok()) {
