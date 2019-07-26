@@ -12,7 +12,7 @@ use crate::types::{Osrank, RandomWalk, RandomWalks, SeedSet};
 use fraction::Fraction;
 use rand::distributions::WeightedError;
 use rand::seq::SliceRandom;
-use rand::Rng;
+use rand::{Rng, SeedableRng};
 
 #[derive(Debug)]
 pub enum OsrankError {}
@@ -27,17 +27,19 @@ pub struct WalkResult<'a, G, I> {
 // Dependency<W>, for I have ran into a cryptic error about the SampleBorrow
 // trait not be implemented, and wasn't able to immediately make the code
 // typecheck.
-pub fn random_walk<'a, L, G>(
+pub fn random_walk<'a, L, G, RNG>(
     seed_set: Option<SeedSet>,
     network: &'a G,
     ledger_view: &L,
     iter: i32,
+    mut rng: RNG,
     get_weight: &Box<Fn(&<G::Edge as GraphObject>::Metadata) -> f64>,
 ) -> Result<WalkResult<'a, G, <G::Node as GraphObject>::Id>, OsrankError>
 where
     L: LedgerView,
     G: Graph,
     Id<G::Node>: Clone + PartialEq,
+    RNG: Rng + SeedableRng,
 {
     match seed_set {
         Some(_) => unimplemented!(),
@@ -50,11 +52,9 @@ where
                     let mut current_node = i.id();
                     // TODO distinguish account/project
                     // TODO Should there be a safeguard so this doesn't run forever?
-                    while rand::thread_rng().gen::<f64>()
-                        < ledger_view.get_damping_factors().project
-                    {
+                    while rng.gen::<f64>() < ledger_view.get_damping_factors().project {
                         let neighbors = network.neighbours(&current_node);
-                        match neighbors.choose_weighted(&mut rand::thread_rng(), |item| {
+                        match neighbors.choose_weighted(&mut rng, |item| {
                             network
                                 .lookup_edge_metadata(&item.id)
                                 .and_then(|m| Some(get_weight(m)))
@@ -85,11 +85,12 @@ where
 /// Naive version of the algorithm that given a full Network and a precomputed
 /// set W of random walks, iterates over each edge of the Network and computes
 /// the osrank.
-pub fn osrank_naive<L, G>(
+pub fn osrank_naive<L, G, RNG>(
     seed_set: Option<SeedSet>,
     network: &mut G,
     ledger_view: &L,
     iter: i32,
+    initial_seed: <RNG as SeedableRng>::Seed,
     get_weight: Box<Fn(&<G::Edge as GraphObject>::Metadata) -> f64>,
     from_osrank: Box<(Fn(&G::Node, Osrank) -> Metadata<G::Node>)>,
 ) -> Result<(), OsrankError>
@@ -97,18 +98,45 @@ where
     L: LedgerView,
     G: Graph,
     Id<G::Node>: Clone + PartialEq,
+    RNG: Rng + SeedableRng,
+    <RNG as SeedableRng>::Seed: Clone,
 {
+    //NOTE(adn) The fact we are creating a new RNG every time we call
+    // `random_walk` is deliberate and something to think about. We probably
+    // want to "restart" the randomness from the initial seed every call to
+    // `random_walk`, which means this function has to consume the RNG.
     match seed_set {
         Some(_) => {
             // Phase1, rank the network and produce a NetworkView.
-            let phase1 = random_walk(seed_set, &*network, ledger_view, iter, &get_weight)?;
+            let phase1 = random_walk(
+                seed_set,
+                &*network,
+                ledger_view,
+                iter,
+                RNG::from_seed(initial_seed.clone()),
+                &get_weight,
+            )?;
             // Phase2, compute the osrank only on the NetworkView
-            let phase2 = random_walk(None, &*phase1.network_view, ledger_view, iter, &get_weight)?;
+            let phase2 = random_walk(
+                None,
+                &*phase1.network_view,
+                ledger_view,
+                iter,
+                RNG::from_seed(initial_seed.clone()),
+                &get_weight,
+            )?;
             rank_network(&phase2.walks, &mut *network, ledger_view, &from_osrank)
         }
         None => {
             // Compute osrank on the full NetworkView
-            let create_walks = random_walk(None, &*network, ledger_view, iter, &get_weight)?;
+            let create_walks = random_walk(
+                None,
+                &*network,
+                ledger_view,
+                iter,
+                RNG::from_seed(initial_seed.clone()),
+                &get_weight,
+            )?;
             rank_network(
                 &create_walks.walks,
                 &mut *network,
@@ -143,10 +171,17 @@ where
 
 #[cfg(test)]
 mod tests {
+
+    extern crate rand;
+    extern crate rand_xorshift;
+
     use super::*;
     use crate::protocol_traits::ledger::MockLedger;
     use crate::types::{Artifact, ArtifactType, DependencyType, Network, Weight};
     use num_traits::Zero;
+    use rand_xorshift::XorShiftRng;
+
+    type MockNetwork = Network<f64>;
 
     #[test]
     fn everything_ok() {
@@ -263,8 +298,24 @@ mod tests {
         });
 
         assert_eq!(network.edge_count(), 11);
+
+        // This is the insertion point of the Graph API. If we had a GraphAPI
+        // "handle" in scope here, we could extract the seed from some state
+        // and use it in the algorithm. Faking it for now.
+
+        let initial_seed = [0; 16];
+
         assert_eq!(
-            osrank_naive(None, &mut network, &mock_ledger, 10, get_weight, set_osrank).unwrap(),
+            osrank_naive::<MockLedger, MockNetwork, XorShiftRng>(
+                None,
+                &mut network,
+                &mock_ledger,
+                10,
+                initial_seed,
+                get_weight,
+                set_osrank
+            )
+            .unwrap(),
             ()
         )
     }
