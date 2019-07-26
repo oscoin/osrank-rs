@@ -3,7 +3,7 @@ extern crate serde;
 extern crate serde_json;
 
 use crate::protocol_traits::graph::Graph;
-use crate::types::{Artifact, Dependency, Network, ProjectAttributes, Weight};
+use crate::types::{ArtifactType, DependencyType, Network, Weight};
 use num_traits::Zero;
 use serde::Deserialize;
 use serde_json::Value;
@@ -23,21 +23,20 @@ pub struct GephiEdge {
 
 /// Construct a Network out of a Gephi json file. Only projects are supported
 /// for now.
-pub fn from_gephi_json(nodes: Vec<GephiNode>, edges: Vec<GephiEdge>) -> Network {
+pub fn from_gephi_json(nodes: Vec<GephiNode>, edges: Vec<GephiEdge>) -> Network<Weight> {
     let mut network = Network::default();
     for node in nodes {
-        let project = Artifact::Project(ProjectAttributes {
-            id: node.id,
+        let project_meta = ArtifactType::Project {
             osrank: Zero::zero(),
-        });
-        network.add_node(project);
+        };
+        network.add_node(node.id, project_meta);
     }
 
-    for edge in edges {
+    for (ix, edge) in edges.iter().enumerate() {
         //FIXME(adn) This should take into account normalisation and
         //redistribution of the weights etc.
-        let depends_on = Dependency::Depend(Weight::new(1, 1));
-        network.add_edge(edge.s, edge.t, depends_on)
+        let depends_on = DependencyType::Depend(Weight::new(1, 1));
+        network.add_edge(&edge.s.to_string(), &edge.t.to_string(), ix, depends_on)
     }
 
     network

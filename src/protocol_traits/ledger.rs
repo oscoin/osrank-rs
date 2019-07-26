@@ -34,6 +34,7 @@ pub trait LedgerView {
 }
 
 /// A `MockLedger` implementation, suitable for tests.
+#[derive(Default)]
 pub struct MockLedger {
     pub params: HyperParams,
     pub factors: DampingFactors,
