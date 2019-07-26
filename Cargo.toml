@@ -65,3 +65,8 @@ failure_derive = { version = "0.1.5", optional = true}
 [dev-dependencies]
 pretty_assertions = "0.6.1"
 tempfile = "^3.1.0"
+bencher = "0.1.5"
+
+[[bench]]
+name = "osrank_naive"
+harness = false
