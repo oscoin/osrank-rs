@@ -15,6 +15,6 @@ fn main() -> Result<(), Box<std::error::Error>> {
 
     // Render to file
     println!("Rendering the network to a file..");
-    &cargo_network.to_graphviz_dot("rust_network.dot".as_ref())?;
+    cargo_network.to_graphviz_dot("rust_network.dot".as_ref())?;
     Ok(())
 }
