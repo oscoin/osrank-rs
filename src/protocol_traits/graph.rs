@@ -185,11 +185,5 @@ impl<'a, N: 'a> Iterator for NodesMut<'a, N> {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.range.next()
-        //let f = &mut self.to_node_id;
-
-        //match self.range.next() {
-        //    None => None,
-        //    Some(v) => Some(f(v)),
-        //}
     }
 }
