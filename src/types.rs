@@ -26,6 +26,15 @@ use petgraph::Directed;
 /// in case no `Osrank` is provided/calculated yet.
 pub type Osrank = Fraction;
 
+/// The number of random walks the algorithm has to perform for each node.
+pub type R = u32;
+
+/// The "pruning threshold" for the initial phase of the Osrank computation.
+/// The objective of the initial phase is to prune any node from the graph
+/// falling below this threshold, to avoid sybil attacks and mitigate other
+/// hostile behaviours.
+pub type Tau = f64;
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct RandomWalks<Id> {
     random_walks_internal: Vec<RandomWalk<Id>>,
