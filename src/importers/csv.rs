@@ -17,6 +17,7 @@ use serde::Deserialize;
 use sprs::{CsMat, TriMat, TriMatBase};
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Seek};
+use std::rc::Rc;
 
 //
 // Types
@@ -69,8 +70,8 @@ impl Default for DependenciesMetadata {
 
 pub struct ContributionsMetadata {
     pub rows: Vec<ContribRow>,
-    pub contributors: HashSet<Contributor>,
-    pub contributor2index: HashMap<Contributor, LocalMatrixIndex>,
+    pub contributors: HashSet<Rc<Contributor>>,
+    pub contributor2index: HashMap<Rc<Contributor>, LocalMatrixIndex>,
 }
 
 impl ContributionsMetadata {
@@ -93,7 +94,7 @@ impl Default for ContributionsMetadata {
 #[derive(Debug, Deserialize)]
 pub struct ContribRow {
     pub project_id: ProjectId,
-    pub contributor: String,
+    pub contributor: Contributor,
     pub repo: String,
     pub contributions: u32,
     pub project_name: ProjectName,
@@ -228,19 +229,19 @@ where
     // rows are the project names and columns the (unique) contributors.
     for result in contribs_csv.records().filter_map(|e| e.ok()) {
         let row: ContribRow = result.deserialize(None)?;
-        let c = row.contributor.clone();
-        let contrib_id = row.contributor.clone();
+        let contributor = Rc::new(row.contributor.clone());
 
         if contribs_meta.contributors.get(&row.contributor).is_none() {
-            contribs_meta.contributors.insert(row.contributor.clone());
-            contribs_meta
-                .contributor2index
-                .insert(c, contribs_meta.contributors.len() - 1);
+            contribs_meta.contributors.insert(Rc::clone(&contributor));
+            contribs_meta.contributor2index.insert(
+                Rc::clone(&contributor),
+                contribs_meta.contributors.len() - 1,
+            );
 
-            index2id.insert(index2id.len(), contrib_id.to_string().clone());
+            index2id.insert(index2id.len(), Rc::clone(&contributor).to_string());
 
             graph.add_node(
-                contrib_id.to_string(),
+                contributor.to_string(),
                 ArtifactType::Account {
                     osrank: Zero::zero(),
                 },
@@ -249,8 +250,6 @@ where
 
         contribs_meta.rows.push(row)
     }
-
-    println!("{:#?}", index2id);
 
     let dep_adj_matrix = new_dependency_adjacency_matrix(&deps_meta, deps_csv)?;
     let con_adj_matrix =
