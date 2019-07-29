@@ -27,6 +27,7 @@ use core::fmt::Debug;
 use num_traits::{Num, One, Signed, Zero};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
+use std::rc::Rc;
 
 //
 // Utility Traits
@@ -237,11 +238,13 @@ fn build_adjacency_matrix(
         .filter_map(|e| e.ok())
     {
         let row: ContribRow = result.deserialize(None)?;
-        let c = row.contributor.clone();
-        contribs_meta.contributors.insert(row.contributor.clone());
-        contribs_meta
-            .contributor2index
-            .insert(c, contribs_meta.contributors.len() - 1);
+        let contributor = Rc::new(row.contributor.clone());
+
+        contribs_meta.contributors.insert(Rc::clone(&contributor));
+        contribs_meta.contributor2index.insert(
+            Rc::clone(&contributor),
+            contribs_meta.contributors.len() - 1,
+        );
         contrib_rows.push(row);
     }
 
@@ -365,6 +368,7 @@ mod tests {
     use osrank::types::{HyperParams, Weight};
     use pretty_assertions::assert_eq;
     use sprs::{CsMat, TriMat, TriMatBase};
+    use std::rc::Rc;
 
     #[test]
     // Check that this implementation is the same as the Python script
@@ -549,6 +553,10 @@ mod tests {
             project2index: [(10, 0), (15, 1), (7, 2)].iter().cloned().collect(),
         };
 
+        let github_foo = Rc::new(String::from("github@foo"));
+        let github_bar = Rc::new(String::from("github@bar"));
+        let github_baz = Rc::new(String::from("github@baz"));
+
         let contribs = ContributionsMetadata {
             rows: vec![
                 ContribRow {
@@ -574,17 +582,17 @@ mod tests {
                 },
             ],
             contributors: [
-                String::from("github@foo"),
-                String::from("github@bar"),
-                String::from("github@baz"),
+                Rc::clone(&github_foo),
+                Rc::clone(&github_bar),
+                Rc::clone(&github_baz),
             ]
             .iter()
             .cloned()
             .collect(),
             contributor2index: [
-                (String::from("github@foo"), 0 as usize),
-                (String::from("github@bar"), 1 as usize),
-                (String::from("github@baz"), 2 as usize),
+                (github_foo, 0 as usize),
+                (github_bar, 1 as usize),
+                (github_baz, 2 as usize),
             ]
             .iter()
             .cloned()
