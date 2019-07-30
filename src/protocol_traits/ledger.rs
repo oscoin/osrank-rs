@@ -1,7 +1,7 @@
 #![allow(unknown_lints)]
 #![warn(clippy::all)]
 
-use crate::types::{DampingFactors, HyperParams};
+use crate::types::{DampingFactors, HyperParams, Tau, R};
 
 /// An Osrank-specific _view_ of a more general _Ledger_.
 ///
@@ -29,6 +29,15 @@ pub trait LedgerView {
     fn get_hyperparams(&self) -> &HyperParams;
     fn set_hyperparams(&mut self, new: HyperParams);
 
+    /// Returns the "R" parameter from the paper, as an unsigned 32bit integer.
+    fn get_random_walks_num(&self) -> &R;
+    fn set_random_walks_num(&mut self, new: R);
+
+    /// Returns the "Tau" parameter for the phase 1 pruning, i.e.
+    /// the "pruning threshold" for the initial phase of the Osrank computation.
+    fn get_tau(&self) -> &Tau;
+    fn set_tau(&mut self, new: Tau);
+
     fn get_damping_factors(&self) -> &DampingFactors;
     fn set_damping_factors(&mut self, new: DampingFactors);
 }
@@ -36,26 +45,57 @@ pub trait LedgerView {
 /// A `MockLedger` implementation, suitable for tests.
 #[derive(Default)]
 pub struct MockLedger {
-    pub params: HyperParams,
-    pub factors: DampingFactors,
+    state: MockLedgerState,
+}
+
+pub struct MockLedgerState {
+    params: HyperParams,
+    factors: DampingFactors,
+    r: R,
+    tau: Tau,
+}
+
+impl Default for MockLedgerState {
+    fn default() -> MockLedgerState {
+        MockLedgerState {
+            params: HyperParams::default(),
+            factors: DampingFactors::default(),
+            r: 10,
+            tau: 0.0,
+        }
+    }
 }
 
 impl LedgerView for MockLedger {
-    type State = HyperParams;
+    type State = MockLedgerState;
 
     fn get_hyperparams(&self) -> &HyperParams {
-        &self.params
+        &self.state.params
     }
 
     fn set_hyperparams(&mut self, new: HyperParams) {
-        self.params = new
+        self.state.params = new
+    }
+
+    fn get_random_walks_num(&self) -> &R {
+        &self.state.r
+    }
+    fn set_random_walks_num(&mut self, new: R) {
+        self.state.r = new
+    }
+
+    fn get_tau(&self) -> &Tau {
+        &self.state.tau
+    }
+    fn set_tau(&mut self, new: Tau) {
+        self.state.tau = new
     }
 
     fn get_damping_factors(&self) -> &DampingFactors {
-        &self.factors
+        &self.state.factors
     }
 
     fn set_damping_factors(&mut self, new: DampingFactors) {
-        self.factors = new
+        self.state.factors = new
     }
 }

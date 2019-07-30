@@ -31,7 +31,6 @@ pub fn random_walk<'a, L, G, RNG>(
     seed_set: Option<SeedSet>,
     network: &'a G,
     ledger_view: &L,
-    iter: i32,
     mut rng: RNG,
     get_weight: &Box<Fn(&<G::Edge as GraphObject>::Metadata) -> f64>,
 ) -> Result<WalkResult<'a, G, <G::Node as GraphObject>::Id>, OsrankError>
@@ -46,7 +45,7 @@ where
         None => {
             let mut walks = RandomWalks::new();
             for i in network.nodes() {
-                for _ in 0..iter {
+                for _ in 0..(*ledger_view.get_random_walks_num()) {
                     let mut walk = RandomWalk::new();
                     walk.add_next(i.id().clone());
                     let mut current_node = i.id();
@@ -89,7 +88,6 @@ pub fn osrank_naive<L, G, RNG>(
     seed_set: Option<SeedSet>,
     network: &mut G,
     ledger_view: &L,
-    iter: i32,
     initial_seed: <RNG as SeedableRng>::Seed,
     get_weight: Box<Fn(&<G::Edge as GraphObject>::Metadata) -> f64>,
     from_osrank: Box<(Fn(&G::Node, Osrank) -> Metadata<G::Node>)>,
@@ -112,7 +110,6 @@ where
                 seed_set,
                 &*network,
                 ledger_view,
-                iter,
                 RNG::from_seed(initial_seed.clone()),
                 &get_weight,
             )?;
@@ -121,7 +118,6 @@ where
                 None,
                 &*phase1.network_view,
                 ledger_view,
-                iter,
                 RNG::from_seed(initial_seed.clone()),
                 &get_weight,
             )?;
@@ -133,7 +129,6 @@ where
                 None,
                 &*network,
                 ledger_view,
-                iter,
                 RNG::from_seed(initial_seed.clone()),
                 &get_weight,
             )?;
@@ -310,7 +305,6 @@ mod tests {
                 None,
                 &mut network,
                 &mock_ledger,
-                10,
                 initial_seed,
                 get_weight,
                 set_osrank
