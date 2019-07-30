@@ -33,7 +33,8 @@ pub trait LedgerView {
     fn get_random_walks_num(&self) -> &R;
     fn set_random_walks_num(&mut self, new: R);
 
-    /// Returns the "Tau" parameter for the phase 1 pruning.
+    /// Returns the "Tau" parameter for the phase 1 pruning, i.e.
+    /// the "pruning threshold" for the initial phase of the Osrank computation.
     fn get_tau(&self) -> &Tau;
     fn set_tau(&mut self, new: Tau);
 
