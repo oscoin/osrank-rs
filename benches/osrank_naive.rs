@@ -1,9 +1,11 @@
 #![macro_use]
-extern crate bencher;
+extern crate criterion;
 extern crate rand;
 extern crate rand_xorshift;
 
-use bencher::Bencher;
+use criterion::Criterion;
+use criterion::criterion_group;
+use criterion::criterion_main;
 use osrank::protocol_traits::graph::{Graph, GraphObject};
 use osrank::protocol_traits::ledger::MockLedger;
 use osrank::types::{Artifact, ArtifactType, DependencyType, Network, Weight};
@@ -13,7 +15,7 @@ use rand_xorshift::XorShiftRng;
 
 type MockNetwork = Network<f64>;
 
-fn bench_add_two(b: &mut Bencher) {
+fn bench_osrank_naive(c: &mut Criterion) {
     let mut network = Network::default();
     network.add_node(
         "p1".to_string(),
@@ -117,9 +119,9 @@ fn bench_add_two(b: &mut Bencher) {
         10,
         DependencyType::Influence(Weight::new(1, 1).as_f64().unwrap()),
     );
-    let mock_ledger = MockLedger::default();
 
-    b.iter(|| {
+    c.bench_function("osrank 10 iterations", move |b| b.iter(|| {
+        let mock_ledger = MockLedger::default();
         let get_weight = Box::new(|m: &DependencyType<f64>| *m.get_weight());
         let set_osrank = Box::new(|node: &Artifact<String>, rank| match node.get_metadata() {
             ArtifactType::Project { osrank: _ } => ArtifactType::Project { osrank: rank },
@@ -134,8 +136,8 @@ fn bench_add_two(b: &mut Bencher) {
             initial_seed,
             get_weight,
             set_osrank)
-    });
+    }));
 }
 
-bencher::benchmark_group!(benches, bench_add_two);
-bencher::benchmark_main!(benches);
+criterion_group!(benches, bench_osrank_naive);
+criterion_main!(benches);
