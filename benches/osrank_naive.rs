@@ -122,24 +122,31 @@ fn construct_network() -> Network<f64> {
     network
 }
 
+fn run_osrank_naive(mut network: &mut Network<f64>, iter: i32, initial_seed: [u8; 16]) {
+    let mock_ledger = MockLedger::default();
+    let get_weight = Box::new(|m: &DependencyType<f64>| *m.get_weight());
+    let set_osrank = Box::new(|node: &Artifact<String>, rank| match node.get_metadata() {
+        ArtifactType::Project { osrank: _ } => ArtifactType::Project { osrank: rank },
+        ArtifactType::Account { osrank: _ } => ArtifactType::Account { osrank: rank },
+    });
+    osrank_naive::<MockLedger, MockNetwork, XorShiftRng>(
+        None,
+        &mut network,
+        &mock_ledger,
+        iter,
+        initial_seed,
+        get_weight,
+        set_osrank);
+}
+
 fn bench_osrank_naive(c: &mut Criterion) {
     let mut network = construct_network();
     c.bench_function("osrank 10 iterations", move |b| b.iter(|| {
-        let mock_ledger = MockLedger::default();
-        let get_weight = Box::new(|m: &DependencyType<f64>| *m.get_weight());
-        let set_osrank = Box::new(|node: &Artifact<String>, rank| match node.get_metadata() {
-            ArtifactType::Project { osrank: _ } => ArtifactType::Project { osrank: rank },
-            ArtifactType::Account { osrank: _ } => ArtifactType::Account { osrank: rank },
-        });
-        let initial_seed = [0; 16];
-        osrank_naive::<MockLedger, MockNetwork, XorShiftRng>(
-            None,
-            &mut network,
-            &mock_ledger,
-            10,
-            initial_seed,
-            get_weight,
-            set_osrank)
+        run_osrank_naive(&mut network, 10, [0; 16])
+    }));
+    let mut network = construct_network();
+    c.bench_function("osrank 100 iterations", move |b| b.iter(|| {
+        run_osrank_naive(&mut network, 100, [0; 16])
     }));
 }
 
