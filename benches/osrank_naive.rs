@@ -15,7 +15,7 @@ use rand_xorshift::XorShiftRng;
 
 type MockNetwork = Network<f64>;
 
-fn bench_osrank_naive(c: &mut Criterion) {
+fn construct_network() -> Network<f64> {
     let mut network = Network::default();
     network.add_node(
         "p1".to_string(),
@@ -119,7 +119,11 @@ fn bench_osrank_naive(c: &mut Criterion) {
         10,
         DependencyType::Influence(Weight::new(1, 1).as_f64().unwrap()),
     );
+    network
+}
 
+fn bench_osrank_naive(c: &mut Criterion) {
+    let mut network = construct_network();
     c.bench_function("osrank 10 iterations", move |b| b.iter(|| {
         let mock_ledger = MockLedger::default();
         let get_weight = Box::new(|m: &DependencyType<f64>| *m.get_weight());
