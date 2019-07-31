@@ -181,6 +181,32 @@ impl From<csv::Error> for CsvImportError {
 /// 30745,github@reem,https://github.com/reem/rust-aio,35,aio
 /// [..]
 /// ```
+///
+/// # Using the import_network to load the Cargo ecosystem
+///
+/// To use the `import_network` to import a `Network` relative to the *whole*
+/// Rust ecosystem, simply run
+///
+/// ```rust, no_run
+/// use osrank::protocol_traits::ledger::MockLedger;
+/// use osrank::importers::csv::import_network;
+/// use osrank::types::Network;
+/// use std::fs::File;
+///
+/// type MockNetwork = Network<f64>;
+///
+/// let mut deps_csv_file = File::open("data/cargo_dependencies.csv").unwrap();
+/// let mut deps_meta_csv_file = File::open("data/cargo_dependencies_meta.csv").unwrap();
+/// let mut contribs_csv_file = File::open("data/cargo_contributions.csv").unwrap();
+/// let mock_ledger = MockLedger::default();
+/// let network = import_network::<MockNetwork, MockLedger, File>( csv::Reader::from_reader(deps_csv_file)
+///                             , csv::Reader::from_reader(deps_meta_csv_file)
+///                             , csv::Reader::from_reader(contribs_csv_file)
+///                             , None
+///                             , &mock_ledger);
+/// assert_eq!(network.is_ok(), true);
+/// ```
+///
 pub fn import_network<G, L, R>(
     deps_csv: csv::Reader<R>,
     deps_meta_csv: csv::Reader<R>,
