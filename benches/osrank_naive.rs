@@ -12,10 +12,12 @@ use osrank::types::{Artifact, ArtifactType, DependencyType, Network, Weight};
 use osrank::algorithm::osrank_naive;
 use num_traits::Zero;
 use rand_xorshift::XorShiftRng;
+use std::fs::File;
+use osrank::importers::csv::import_network;
 
 type MockNetwork = Network<f64>;
 
-fn construct_network() -> Network<f64> {
+fn construct_network_small() -> Network<f64> {
     let mut network = Network::default();
     network.add_node(
         "p1".to_string(),
@@ -122,6 +124,19 @@ fn construct_network() -> Network<f64> {
     network
 }
 
+#[allow(dead_code)]
+fn construct_network() -> Network<f64> {
+    let deps_csv_file = File::open("data/cargo_dependencies.csv").unwrap();
+    let deps_meta_csv_file = File::open("data/cargo_dependencies_meta.csv").unwrap();
+    let contribs_csv_file = File::open("data/cargo_contributions.csv").unwrap();
+    let mock_ledger = MockLedger::default();
+    import_network::<MockNetwork, MockLedger, File>( csv::Reader::from_reader(deps_csv_file)
+                                , csv::Reader::from_reader(deps_meta_csv_file)
+                                , csv::Reader::from_reader(contribs_csv_file)
+                                , None
+                                , &mock_ledger).unwrap()
+}
+
 fn run_osrank_naive(mut network: &mut Network<f64>, iter: i32, initial_seed: [u8; 16]) {
     let mock_ledger = MockLedger::default();
     let get_weight = Box::new(|m: &DependencyType<f64>| *m.get_weight());
@@ -140,14 +155,10 @@ fn run_osrank_naive(mut network: &mut Network<f64>, iter: i32, initial_seed: [u8
 }
 
 fn bench_osrank_naive(c: &mut Criterion) {
-    let mut network = construct_network();
-    c.bench_function("osrank 10 iterations", move |b| b.iter(|| {
-        run_osrank_naive(&mut network, 10, [0; 16])
-    }));
-    let mut network = construct_network();
-    c.bench_function("osrank 100 iterations", move |b| b.iter(|| {
-        run_osrank_naive(&mut network, 100, [0; 16])
-    }));
+    let mut network = construct_network_small();
+    c.bench_function_over_inputs("osrank by iterations", move |b, &&iter| b.iter(|| {
+        run_osrank_naive(&mut network, iter, [0; 16])
+    }), &[1, 5, 10, 50, 100]);
 }
 
 criterion_group!(benches, bench_osrank_naive);
