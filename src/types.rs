@@ -533,6 +533,10 @@ where
         self.from_graph.edge_count()
     }
 
+    fn node_count(&self) -> usize {
+        self.from_graph.node_count()
+    }
+
     fn lookup_node_metadata(&self, node_id: &Id<Self::Node>) -> Option<&Metadata<Self::Node>> {
         self.node_ids
             .get(node_id)
