@@ -3,7 +3,7 @@ extern crate criterion;
 extern crate rand;
 extern crate rand_xorshift;
 
-use criterion::Criterion;
+use criterion::{Criterion, Benchmark};
 use criterion::criterion_group;
 use criterion::criterion_main;
 use osrank::protocol_traits::graph::{Graph, GraphObject};
@@ -176,14 +176,14 @@ fn bench_osrank_naive_on_small_network(c: &mut Criterion) {
     }), &[1, 5, 10, 50, 100]);
 }
 
-// not run as a default yet, since it takes about 15 minutes
-// to run it, add it to `criterion_group!` below.
+// run with a lower sample size to speed things up
 fn bench_osrank_naive_on_sample_csv(c: &mut Criterion) {
     let mut network = construct_network();
     let info = format!("osrank with {:?} nodes, iter: 1", &network.node_count());
-    c.bench_function(&info, move |b| b.iter(|| {
-        run_osrank_naive(&mut network, 1, [0; 16])
-    }));
+    c.bench(&info,
+        Benchmark::new("sample size 10", move |b| b.iter(|| {run_osrank_naive(&mut network, 1, [0; 16])}))
+            .sample_size(10)
+    );
 }
 
 fn bench_random_walk_on_csv(c: &mut Criterion) {
@@ -194,5 +194,9 @@ fn bench_random_walk_on_csv(c: &mut Criterion) {
     }));
 }
 
-criterion_group!(benches, bench_osrank_naive_on_small_network, bench_random_walk_on_csv);
+criterion_group!(
+    benches,
+    bench_osrank_naive_on_small_network,
+    bench_random_walk_on_csv,
+    bench_osrank_naive_on_sample_csv);
 criterion_main!(benches);
