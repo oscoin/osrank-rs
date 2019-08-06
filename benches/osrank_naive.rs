@@ -7,123 +7,52 @@ use criterion::{Criterion, Benchmark};
 use criterion::criterion_group;
 use criterion::criterion_main;
 use osrank::protocol_traits::graph::{Graph, GraphObject};
-use osrank::protocol_traits::ledger::MockLedger;
-use osrank::protocol_traits::ledger::LedgerView;
+use osrank::protocol_traits::ledger::{MockLedger, LedgerView};
 use osrank::types::{Artifact, ArtifactType, Dependency, DependencyType, Network, Weight};
 use osrank::algorithm::osrank_naive;
 use osrank::algorithm::random_walk;
+use osrank::importers::csv::import_network;
 use num_traits::Zero;
 use rand_xorshift::XorShiftRng;
 use crate::rand::SeedableRng;
 use std::fs::File;
-use osrank::importers::csv::import_network;
 
 type MockNetwork = Network<f64>;
 
 fn construct_network_small() -> Network<f64> {
     let mut network = Network::default();
-    network.add_node(
-        "p1".to_string(),
-        ArtifactType::Project {
-            osrank: Zero::zero(),
-        },
-    );
-    network.add_node(
-        "p2".to_string(),
-        ArtifactType::Project {
-            osrank: Zero::zero(),
-        },
-    );
-    network.add_node(
-        "p3".to_string(),
-        ArtifactType::Project {
-            osrank: Zero::zero(),
-        },
-    );
-    network.add_node(
-        "a1".to_string(),
-        ArtifactType::Project {
-            osrank: Zero::zero(),
-        },
-    );
-    network.add_node(
-        "a2".to_string(),
-        ArtifactType::Project {
-            osrank: Zero::zero(),
-        },
-    );
-    network.add_node(
-        "a3".to_string(),
-        ArtifactType::Project {
-            osrank: Zero::zero(),
-        },
-    );
-    network.add_edge(
-        &"p1".to_string(),
-        &"a1".to_string(),
-        0,
-        DependencyType::Influence(Weight::new(3, 7).as_f64().unwrap()),
-    );
-    network.add_edge(
-        &"a1".to_string(),
-        &"p1".to_string(),
-        1,
-        DependencyType::Influence(Weight::new(1, 1).as_f64().unwrap()),
-    );
-    network.add_edge(
-        &"p1".to_string(),
-        &"p2".to_string(),
-        2,
-        DependencyType::Influence(Weight::new(4, 7).as_f64().unwrap()),
-    );
-    network.add_edge(
-        &"p2".to_string(),
-        &"a2".to_string(),
-        3,
-        DependencyType::Influence(Weight::new(1, 1).as_f64().unwrap()),
-    );
-    network.add_edge(
-        &"a2".to_string(),
-        &"p2".to_string(),
-        4,
-        DependencyType::Influence(Weight::new(1, 3).as_f64().unwrap()),
-    );
-    network.add_edge(
-        &"a2".to_string(),
-        &"p3".to_string(),
-        5,
-        DependencyType::Influence(Weight::new(2, 3).as_f64().unwrap()),
-    );
-    network.add_edge(
-        &"p3".to_string(),
-        &"a2".to_string(),
-        6,
-        DependencyType::Influence(Weight::new(11, 28).as_f64().unwrap()),
-    );
-    network.add_edge(
-        &"p3".to_string(),
-        &"a3".to_string(),
-        7,
-        DependencyType::Influence(Weight::new(1, 28).as_f64().unwrap()),
-    );
-    network.add_edge(
-        &"p3".to_string(),
-        &"p1".to_string(),
-        8,
-        DependencyType::Influence(Weight::new(2, 7).as_f64().unwrap()),
-    );
-    network.add_edge(
-        &"p3".to_string(),
-        &"p2".to_string(),
-        9,
-        DependencyType::Influence(Weight::new(2, 7).as_f64().unwrap()),
-    );
-    network.add_edge(
-        &"a3".to_string(),
-        &"p3".to_string(),
-        10,
-        DependencyType::Influence(Weight::new(1, 1).as_f64().unwrap()),
-    );
+    for node in &["p1", "p2", "p3"] {
+        network.add_node(
+            node.to_string(),
+            ArtifactType::Project {
+                osrank: Zero::zero(),
+            },
+        )
+    }
+    for node in &["a1", "a2", "a3"] {
+        network.add_node(
+            node.to_string(),
+            ArtifactType::Account {
+                osrank: Zero::zero(),
+            },
+        )
+    }
+    let edges = [
+        ("a1", "p2", Weight::new(3, 7)), ("p1", "p2", Weight::new(1, 1)),
+        ("p1", "p2", Weight::new(4, 7)), ("p2", "a2", Weight::new(1, 1)),
+        ("a2", "p2", Weight::new(1, 3)), ("a2", "p3", Weight::new(2, 3)),
+        ("p3", "a2", Weight::new(11, 28)), ("p3", "a3", Weight::new(1, 28)),
+        ("p3", "p1", Weight::new(2, 7)), ("p3", "p2", Weight::new(2, 7)),
+        ("a3", "p3", Weight::new(1, 1))
+    ];
+    for edge in &edges {
+        network.add_edge(
+            &edge.0.to_string(),
+            &edge.1.to_string(),
+            2,
+            DependencyType::Influence(edge.2.as_f64().unwrap()),
+        )
+    }
     network
 }
 
@@ -188,7 +117,7 @@ fn bench_osrank_naive_on_sample_csv(c: &mut Criterion) {
 }
 
 fn bench_random_walk_on_csv(c: &mut Criterion) {
-    let mut network = construct_network();
+    let network = construct_network();
     let info = format!("random walks with {:?} nodes, iter: 1", &network.node_count());
     c.bench_function(&info, move |b| b.iter(|| {
         run_random_walk(&network, 1, [0; 16])
