@@ -195,10 +195,33 @@ fn bench_random_walk_on_csv(c: &mut Criterion) {
     }));
 }
 
+fn bench_count_visits(c: &mut Criterion) {
+    let network = construct_network();
+    let mut mock_ledger = MockLedger::default();
+    mock_ledger.set_random_walks_num(1);
+    let get_weight:Box<Fn(&<Dependency<usize, f64> as GraphObject>::Metadata) -> f64>
+        = Box::new(|m: &DependencyType<f64>| *m.get_weight());
+    let walks = random_walk::<MockLedger, MockNetwork, XorShiftRng>(
+                    None,
+                    &network,
+                    &mock_ledger,
+                    XorShiftRng::from_seed([0; 16]),
+                    &get_weight).unwrap().walks;
+    let info = format!("count visits of {:?} nodes by {:?} walks", &network.node_count(), &walks.len());
+    c.bench(&info,
+        Benchmark::new("sample size 10", move |b| b.iter(|| {
+            for node in network.nodes(){
+                &walks.count_visits(node.id().clone());
+            }
+        })).sample_size(10)
+    );
+}
+
 criterion_group!(
     benches,
     bench_osrank_naive_on_small_network,
+    bench_osrank_naive_on_sample_csv,
     bench_random_walk_on_csv,
-    bench_osrank_naive_on_sample_csv
+    bench_count_visits
 );
 criterion_main!(benches);

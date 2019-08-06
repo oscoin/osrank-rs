@@ -19,8 +19,8 @@ pub enum OsrankError {}
 
 #[derive(Debug)]
 pub struct WalkResult<'a, G, I> {
-    network_view: &'a G,
-    walks: RandomWalks<I>,
+    pub network_view: &'a G,
+    pub walks: RandomWalks<I>,
 }
 
 // FIXME(adn) It should be possible to make this code parametric over
