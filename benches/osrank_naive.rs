@@ -171,9 +171,10 @@ fn run_random_walk(network: &Network<f64>, iter: u32, initial_seed: [u8; 16]) {
 
 fn bench_osrank_naive_on_small_network(c: &mut Criterion) {
     let mut network = construct_network_small();
-    c.bench_function_over_inputs("osrank by iterations", move |b, &&iter| b.iter(|| {
-        run_osrank_naive(&mut network, iter, [0; 16])
-    }), &[1, 5, 10, 50, 100]);
+    c.bench_function("osrank by random seed", move |b| b.iter(|| {
+        let rand_vec : [u8; 16] = rand::random();
+        run_osrank_naive(&mut network, 1, rand_vec)
+    }));
 }
 
 // run with a lower sample size to speed things up
@@ -198,5 +199,6 @@ criterion_group!(
     benches,
     bench_osrank_naive_on_small_network,
     bench_random_walk_on_csv,
-    bench_osrank_naive_on_sample_csv);
+    bench_osrank_naive_on_sample_csv
+);
 criterion_main!(benches);
