@@ -8,9 +8,10 @@ use criterion::criterion_group;
 use criterion::criterion_main;
 use osrank::protocol_traits::graph::{Graph, GraphObject};
 use osrank::protocol_traits::ledger::{MockLedger, LedgerView};
-use osrank::types::{Artifact, ArtifactType, Dependency, DependencyType, Network, Weight};
+use osrank::types::{Artifact, ArtifactType, Dependency, DependencyType, Network, Osrank, Weight};
 use osrank::algorithm::osrank_naive;
 use osrank::algorithm::random_walk;
+use osrank::algorithm::rank_network;
 use osrank::importers::csv::import_network;
 use num_traits::Zero;
 use rand_xorshift::XorShiftRng;
@@ -124,24 +125,31 @@ fn bench_random_walk_on_csv(c: &mut Criterion) {
     }));
 }
 
-fn bench_count_visits(c: &mut Criterion) {
-    let network = construct_network();
+fn bench_rank_network(c: &mut Criterion) {
+    let mut network = construct_network();
     let mut mock_ledger = MockLedger::default();
     mock_ledger.set_random_walks_num(1);
     let get_weight:Box<Fn(&<Dependency<usize, f64> as GraphObject>::Metadata) -> f64>
         = Box::new(|m: &DependencyType<f64>| *m.get_weight());
+    let set_osrank:Box<(Fn(&Artifact<String>, Osrank) -> ArtifactType)>
+        = Box::new(|node: &Artifact<String>, rank| match node.get_metadata() {
+        ArtifactType::Project { osrank: _ } => ArtifactType::Project { osrank: rank },
+        ArtifactType::Account { osrank: _ } => ArtifactType::Account { osrank: rank },
+    });
     let walks = random_walk::<MockLedger, MockNetwork, XorShiftRng>(
                     None,
                     &network,
                     &mock_ledger,
                     XorShiftRng::from_seed([0; 16]),
                     &get_weight).unwrap().walks;
-    let info = format!("count visits of {:?} nodes by {:?} walks", &network.node_count(), &walks.len());
+    let info = format!("bench network of {:?} nodes with {:?} walks", &network.node_count(), &walks.len());
     c.bench(&info,
         Benchmark::new("sample size 10", move |b| b.iter(|| {
-            for node in network.nodes(){
-                &walks.count_visits(node.id().clone());
-            }
+            rank_network(
+                &walks,
+                &mut network,
+                &mock_ledger,
+                &set_osrank)
         })).sample_size(10)
     );
 }
@@ -151,6 +159,6 @@ criterion_group!(
     bench_osrank_naive_on_small_network,
     bench_osrank_naive_on_sample_csv,
     bench_random_walk_on_csv,
-    bench_count_visits
+    bench_rank_network
 );
 criterion_main!(benches);
