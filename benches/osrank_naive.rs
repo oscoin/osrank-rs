@@ -5,6 +5,7 @@ extern crate rand_xorshift;
 
 use crate::rand::SeedableRng;
 use criterion::{criterion_group, criterion_main, Benchmark, Criterion};
+use itertools::Itertools;
 use num_traits::Zero;
 use osrank::algorithm::{osrank_naive, random_walk, rank_network};
 use osrank::importers::csv::import_network;
@@ -15,6 +16,7 @@ use osrank::algorithm::{osrank_naive, random_walk, rank_network};
 use osrank::importers::csv::import_network;
 use rand_xorshift::XorShiftRng;
 use std::fs::File;
+use std::io::{BufRead, BufReader};
 
 type MockNetwork = Network<f64>;
 
@@ -61,14 +63,34 @@ fn construct_network_small() -> Network<f64> {
 }
 
 fn construct_network() -> Network<f64> {
-    let deps_csv_file = File::open("data/cargo_dependencies.csv").unwrap();
-    let deps_meta_csv_file = File::open("data/cargo_dependencies_meta_bench_sample.csv").unwrap();
-    let contribs_csv_file = File::open("data/cargo_contributions_bench_sample.csv").unwrap();
+    let deps_reader = BufReader::new(File::open("data/cargo_dependencies.csv").unwrap())
+        .split(b'\n')
+        .map(|l| l.unwrap())
+        .intersperse(vec![b'\n'])
+        .flatten()
+        .collect::<Vec<u8>>();
+
+    let deps_meta_reader = BufReader::new(File::open("data/cargo_dependencies_meta.csv").unwrap())
+        .split(b'\n')
+        .map(|l| l.unwrap())
+        .take(1000)
+        .intersperse(vec![b'\n']) // re-add the '\n'
+        .flatten()
+        .collect::<Vec<u8>>();
+
+    let contribs_reader = BufReader::new(File::open("data/cargo_contributions.csv").unwrap())
+        .split(b'\n')
+        .map(|l| l.unwrap())
+        .take(10000)
+        .intersperse(vec![b'\n']) // re-add the '\n'
+        .flatten()
+        .collect::<Vec<u8>>();
+
     let mock_ledger = MockLedger::default();
-    import_network::<MockNetwork, MockLedger, File>(
-        csv::Reader::from_reader(deps_csv_file),
-        csv::Reader::from_reader(deps_meta_csv_file),
-        csv::Reader::from_reader(contribs_csv_file),
+    import_network::<MockNetwork, MockLedger, _>(
+        csv::Reader::from_reader(deps_reader.as_slice()),
+        csv::Reader::from_reader(deps_meta_reader.as_slice()),
+        csv::Reader::from_reader(contribs_reader.as_slice()),
         None,
         &mock_ledger,
     )

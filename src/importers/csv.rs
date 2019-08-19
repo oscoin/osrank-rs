@@ -16,7 +16,7 @@ use num_traits::{Num, One, Zero};
 use serde::Deserialize;
 use sprs::{CsMat, TriMat, TriMatBase};
 use std::collections::{HashMap, HashSet};
-use std::io::{Read, Seek};
+use std::io::Read;
 use std::rc::Rc;
 
 //
@@ -217,7 +217,7 @@ pub fn import_network<G, L, R>(
 ) -> Result<G, CsvImportError>
 where
     L: LedgerView,
-    R: Read + Seek,
+    R: Read,
     G: Graph<Node = Artifact<String>, Edge = Dependency<usize, f64>>,
 {
     let mut deps_meta = DependenciesMetadata::new();
