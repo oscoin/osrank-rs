@@ -20,16 +20,16 @@ use petgraph::graph::{node_index, EdgeIndex, NodeIndex};
 use petgraph::visit::EdgeRef;
 use petgraph::Directed;
 
-#[derive(Debug)]
-pub struct Dependency<Id, W> {
+#[derive(Debug, Clone)]
+pub struct Dependency<Id: Clone, W: Clone> {
     id: Id,
     dependency_type: DependencyType<W>,
 }
 
 impl<Id, W> fmt::Display for Dependency<Id, W>
 where
-    W: fmt::Display,
-    Id: fmt::Display,
+    W: fmt::Display + Clone,
+    Id: fmt::Display + Clone,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(
@@ -40,8 +40,8 @@ where
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum DependencyType<W> {
+#[derive(Clone, Debug, PartialEq)]
+pub enum DependencyType<W: Clone> {
     Contrib(W),
     ContribPrime(W),
     Maintain(W),
@@ -55,7 +55,7 @@ pub enum DependencyType<W> {
 
 impl<W> fmt::Display for DependencyType<W>
 where
-    W: fmt::Display,
+    W: fmt::Display + Clone,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self {
@@ -69,7 +69,10 @@ where
     }
 }
 
-impl<W> DependencyType<W> {
+impl<W> DependencyType<W>
+where
+    W: Clone,
+{
     pub fn get_weight(&self) -> &W {
         match self {
             DependencyType::Contrib(ref w) => w,
@@ -82,7 +85,11 @@ impl<W> DependencyType<W> {
     }
 }
 
-impl<DependencyId, W> GraphObject for Dependency<DependencyId, W> {
+impl<DependencyId, W> GraphObject for Dependency<DependencyId, W>
+where
+    DependencyId: Clone,
+    W: Clone,
+{
     type Id = DependencyId;
     type Metadata = DependencyType<W>;
 
@@ -99,13 +106,13 @@ impl<DependencyId, W> GraphObject for Dependency<DependencyId, W> {
     }
 }
 
-#[derive(Debug, PartialOrd, PartialEq, Eq)]
-pub struct Artifact<Id> {
+#[derive(Clone, Debug, PartialOrd, PartialEq, Eq)]
+pub struct Artifact<Id: Clone> {
     id: Id,
     artifact_type: ArtifactType,
 }
 
-#[derive(Debug, PartialOrd, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialOrd, PartialEq, Eq)]
 pub enum ArtifactType {
     Project { osrank: Osrank },
     Account { osrank: Osrank },
@@ -120,7 +127,10 @@ impl ArtifactType {
     }
 }
 
-impl<ArtifactId> GraphObject for Artifact<ArtifactId> {
+impl<ArtifactId> GraphObject for Artifact<ArtifactId>
+where
+    ArtifactId: Clone,
+{
     type Id = ArtifactId;
     type Metadata = ArtifactType;
 
@@ -139,7 +149,7 @@ impl<ArtifactId> GraphObject for Artifact<ArtifactId> {
 
 impl<Id> fmt::Display for Artifact<Id>
 where
-    Id: fmt::Display,
+    Id: fmt::Display + Clone,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self.artifact_type {
@@ -150,8 +160,8 @@ where
 }
 
 /// The network graph from the paper, comprising of both accounts and projects.
-#[derive(Debug, Default)]
-pub struct Network<W> {
+#[derive(Clone, Debug, Default)]
+pub struct Network<W: Clone> {
     from_graph: petgraph::Graph<Artifact<String>, Dependency<usize, W>, Directed>,
     node_ids: HashMap<String, NodeIndex>,
     edge_ids: HashMap<usize, EdgeIndex>,
@@ -159,7 +169,7 @@ pub struct Network<W> {
 
 impl<W> Network<W>
 where
-    W: fmt::Display,
+    W: fmt::Display + Clone,
 {
     /// Adds an Artifact to the Network.
     fn add_artifact(&mut self, id: String, artifact_type: ArtifactType) {
@@ -206,7 +216,7 @@ where
 
 impl<W> Graph for Network<W>
 where
-    W: Default + fmt::Display,
+    W: Default + fmt::Display + Clone,
 {
     type Node = Artifact<String>;
     type Edge = Dependency<usize, W>;
@@ -315,20 +325,22 @@ where
         }
     }
 
-    fn subgraph_by_nodes(
-        &self,
-        sub_nodes: Vec<&Artifact<String>>
-    ) -> Self
-    {
+    fn subgraph_by_nodes(&self, sub_nodes: Vec<&Artifact<String>>) -> Self {
         // TODO filter_map might not keep the same index if nodes are removed. An alternative to subgraph could
         // be to add a metadata to the graph `trusted` and only use `trusted_neighbours` in phase 2
-        let sub_graph = self.from_graph.filter_map(
-            |id, node| if sub_nodes.iter().any(|sn| sn.id() == node.id()) {Some(node.clone())} else {None},
-            |id, edge| Some(edge.clone())
+        let mut sub_network = self.clone();
+        let sub_graph = sub_network.from_graph.filter_map(
+            |_id, node| {
+                if sub_nodes.iter().any(|sn| sn.id() == node.id()) {
+                    Some(node.clone())
+                } else {
+                    None
+                }
+            },
+            |_id, edge| Some(edge.clone()),
         );
-        let mut sub_net = Network::default();
-        sub_net.from_graph = sub_graph;
-        sub_net
+        sub_network.from_graph = sub_graph;
+        sub_network
     }
 }
 
@@ -340,7 +352,7 @@ pub trait PrintableGraph<'a>: Graph {
 
 impl<'a, W> PrintableGraph<'a> for Network<W>
 where
-    W: Default + fmt::Display,
+    W: Default + fmt::Display + Clone,
 {
     fn print_nodes(&self) {
         for arti in self.from_graph.raw_nodes().iter().map(|node| &node.weight) {
