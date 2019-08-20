@@ -12,8 +12,6 @@ use osrank::importers::csv::import_network;
 use osrank::protocol_traits::graph::{Graph, GraphObject};
 use osrank::protocol_traits::ledger::{LedgerView, MockLedger};
 use osrank::types::{Artifact, ArtifactType, Dependency, DependencyType, Network, Osrank, Weight};
-use osrank::algorithm::{osrank_naive, random_walk, rank_network};
-use osrank::importers::csv::import_network;
 use rand_xorshift::XorShiftRng;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -62,7 +60,7 @@ fn construct_network_small() -> Network<f64> {
     network
 }
 
-fn construct_network() -> Network<f64> {
+fn construct_network(meta_num: usize, contributions_num: usize) -> Network<f64> {
     let deps_reader = BufReader::new(File::open("data/cargo_dependencies.csv").unwrap())
         .split(b'\n')
         .map(|l| l.unwrap())
@@ -73,7 +71,7 @@ fn construct_network() -> Network<f64> {
     let deps_meta_reader = BufReader::new(File::open("data/cargo_dependencies_meta.csv").unwrap())
         .split(b'\n')
         .map(|l| l.unwrap())
-        .take(1000)
+        .take(meta_num)
         .intersperse(vec![b'\n']) // re-add the '\n'
         .flatten()
         .collect::<Vec<u8>>();
@@ -81,7 +79,7 @@ fn construct_network() -> Network<f64> {
     let contribs_reader = BufReader::new(File::open("data/cargo_contributions.csv").unwrap())
         .split(b'\n')
         .map(|l| l.unwrap())
-        .take(10000)
+        .take(contributions_num)
         .intersperse(vec![b'\n']) // re-add the '\n'
         .flatten()
         .collect::<Vec<u8>>();
@@ -143,7 +141,7 @@ fn bench_osrank_naive_on_small_network(c: &mut Criterion) {
 
 // run with a lower sample size to speed things up
 fn bench_osrank_naive_on_sample_csv(c: &mut Criterion) {
-    let mut network = construct_network();
+    let mut network = construct_network(1_000, 10_000);
     let info = format!("osrank with {:?} nodes, iter: 1", &network.node_count());
     c.bench(
         &info,
@@ -155,7 +153,7 @@ fn bench_osrank_naive_on_sample_csv(c: &mut Criterion) {
 }
 
 fn bench_random_walk_on_csv(c: &mut Criterion) {
-    let network = construct_network();
+    let network = construct_network(1_000, 10_000);
     let info = format!(
         "random walks with {:?} nodes, iter: 1",
         &network.node_count()
@@ -166,7 +164,7 @@ fn bench_random_walk_on_csv(c: &mut Criterion) {
 }
 
 fn bench_rank_network(c: &mut Criterion) {
-    let mut network = construct_network();
+    let mut network = construct_network(1_000, 10_000);
     let mut mock_ledger = MockLedger::default();
     mock_ledger.set_random_walks_num(1);
     let get_weight: Box<Fn(&<Dependency<usize, f64> as GraphObject>::Metadata) -> f64> =
