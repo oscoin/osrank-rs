@@ -147,6 +147,9 @@ pub trait Graph: Default {
 
     /// Replaces the _metadata_ associated to the input `EdgeId`.
     fn set_edge_metadata(&mut self, edge_id: &Id<Self::Edge>, new: Metadata<Self::Edge>);
+
+    /// Creates a subgraph of on the nodes of `sub_nodes` of `self`.
+    fn subgraph_by_nodes(&self, sub_nodes: Vec<&Self::Node>) -> Self;
 }
 
 pub struct EdgeReference<'a, NodeId, EdgeId> {

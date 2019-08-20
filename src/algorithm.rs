@@ -71,7 +71,7 @@ where
 // trait not be implemented, and wasn't able to immediately make the code
 // typecheck.
 pub fn random_walk<'a, L, G, RNG>(
-    seed_set: Option<SeedSet>,
+    seed_set: Option<Nodes<G::Node>>,
     network: &'a G,
     ledger_view: &L,
     rng: RNG,
@@ -84,7 +84,21 @@ where
     RNG: Rng + SeedableRng,
 {
     match seed_set {
-        Some(_) => unimplemented!(),
+        Some(seeds) => {
+            let walks = walks(seeds, network, ledger_view, rng, get_weight);
+            let mut trusted_nodes:Vec<&G::Node> = Vec::new();
+            for node in network.nodes() {
+                 if rank_node::<L, G>(&walks, node.id().clone(), ledger_view) > Osrank::new(0u32,0u32) {
+                     trusted_nodes.push(&node);
+                 }
+            }
+            let res = WalkResult {
+                network_view: &network.subgraph_by_nodes(trusted_nodes),
+                walks,
+            };
+
+            Ok(res)
+        },
         None => {
             let res = WalkResult {
                 network_view: network,
@@ -100,7 +114,7 @@ where
 /// set W of random walks, iterates over each edge of the Network and computes
 /// the osrank.
 pub fn osrank_naive<L, G, RNG>(
-    seed_set: Option<SeedSet>,
+    seed_set: Option<Nodes<G::Node>>,
     network: &mut G,
     ledger_view: &L,
     initial_seed: <RNG as SeedableRng>::Seed,

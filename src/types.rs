@@ -555,6 +555,22 @@ where
             self.from_graph[*eid].set_metadata(new)
         }
     }
+
+    fn subgraph_by_nodes(
+        &self,
+        sub_nodes: Vec<&Artifact<String>>
+    ) -> Self
+    {
+        // TODO filter_map might not keep the same index if nodes are removed. An alternative to subgraph could
+        // be to add a metadata to the graph `trusted` and only use `trusted_neighbours` in phase 2
+        let sub_graph = self.from_graph.filter_map(
+            |id, node| if sub_nodes.iter().any(|sn| sn.id() == node.id()) {Some(node.clone())} else {None},
+            |id, edge| Some(edge.clone())
+        );
+        let mut sub_net = Network::default();
+        sub_net.from_graph = sub_graph;
+        sub_net
+    }
 }
 
 /// Trait to print (parts of) the for debugging purposes
