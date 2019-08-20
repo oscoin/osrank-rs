@@ -8,7 +8,7 @@ extern crate sprs;
 
 use crate::protocol_traits::graph::{Graph, GraphObject, Id, Metadata, Nodes};
 use crate::protocol_traits::ledger::LedgerView;
-use crate::types::{Osrank, RandomWalk, RandomWalks, SeedSet};
+use crate::types::{Osrank, RandomWalk, RandomWalks};
 use fraction::Fraction;
 use rand::distributions::WeightedError;
 use rand::seq::SliceRandom;
@@ -18,8 +18,8 @@ use rand::{Rng, SeedableRng};
 pub enum OsrankError {}
 
 #[derive(Debug)]
-pub struct WalkResult<'a, G, I> {
-    network_view: &'a G,
+pub struct WalkResult<G, I> {
+    network_view: G,
     walks: RandomWalks<I>,
 }
 
@@ -76,32 +76,33 @@ pub fn random_walk<'a, L, G, RNG>(
     ledger_view: &L,
     rng: RNG,
     get_weight: &Box<Fn(&<G::Edge as GraphObject>::Metadata) -> f64>,
-) -> Result<WalkResult<'a, G, <G::Node as GraphObject>::Id>, OsrankError>
+) -> Result<WalkResult<G, <G::Node as GraphObject>::Id>, OsrankError>
 where
     L: LedgerView,
-    G: Graph,
+    G: Graph + Clone,
     Id<G::Node>: Clone + PartialEq,
     RNG: Rng + SeedableRng,
 {
     match seed_set {
         Some(seeds) => {
             let walks = walks(seeds, network, ledger_view, rng, get_weight);
-            let mut trusted_nodes:Vec<&G::Node> = Vec::new();
+            let mut trusted_nodes: Vec<&G::Node> = Vec::new();
             for node in network.nodes() {
-                 if rank_node::<L, G>(&walks, node.id().clone(), ledger_view) > Osrank::new(0u32,0u32) {
-                     trusted_nodes.push(&node);
-                 }
+                if rank_node::<L, G>(&walks, node.id().clone(), ledger_view)
+                    > Osrank::new(0u32, 0u32)
+                {
+                    trusted_nodes.push(&node);
+                }
             }
-            let res = WalkResult {
-                network_view: &network.subgraph_by_nodes(trusted_nodes),
+            Ok(WalkResult {
+                network_view: network.subgraph_by_nodes(trusted_nodes),
                 walks,
-            };
-
-            Ok(res)
-        },
+            })
+        }
         None => {
+            let whole_network = (*network).clone(); // FIXME, terrible.
             let res = WalkResult {
-                network_view: network,
+                network_view: whole_network,
                 walks: walks(network.nodes(), network, ledger_view, rng, get_weight),
             };
 
@@ -123,7 +124,7 @@ pub fn osrank_naive<L, G, RNG>(
 ) -> Result<(), OsrankError>
 where
     L: LedgerView,
-    G: Graph,
+    G: Graph + Clone,
     Id<G::Node>: Clone + PartialEq,
     RNG: Rng + SeedableRng,
     <RNG as SeedableRng>::Seed: Clone,
@@ -145,7 +146,7 @@ where
             // Phase2, compute the osrank only on the NetworkView
             let phase2 = random_walk(
                 None,
-                &*phase1.network_view,
+                &phase1.network_view,
                 ledger_view,
                 RNG::from_seed(initial_seed.clone()),
                 &get_weight,
@@ -231,7 +232,7 @@ mod tests {
                     osrank: Zero::zero(),
                 },
             )
-        };
+        }
         for node in &["a1", "a2", "a3"] {
             network.add_node(
                 node.to_string(),
@@ -239,14 +240,19 @@ mod tests {
                     osrank: Zero::zero(),
                 },
             )
-        };
+        }
         let edges = [
-            ("a1", "p2", Weight::new(3, 7)), ("p1", "p2", Weight::new(1, 1)),
-            ("p1", "p2", Weight::new(4, 7)), ("p2", "a2", Weight::new(1, 1)),
-            ("a2", "p2", Weight::new(1, 3)), ("a2", "p3", Weight::new(2, 3)),
-            ("p3", "a2", Weight::new(11, 28)), ("p3", "a3", Weight::new(1, 28)),
-            ("p3", "p1", Weight::new(2, 7)), ("p3", "p2", Weight::new(2, 7)),
-            ("a3", "p3", Weight::new(1, 1))
+            ("a1", "p2", Weight::new(3, 7)),
+            ("p1", "p2", Weight::new(1, 1)),
+            ("p1", "p2", Weight::new(4, 7)),
+            ("p2", "a2", Weight::new(1, 1)),
+            ("a2", "p2", Weight::new(1, 3)),
+            ("a2", "p3", Weight::new(2, 3)),
+            ("p3", "a2", Weight::new(11, 28)),
+            ("p3", "a3", Weight::new(1, 28)),
+            ("p3", "p1", Weight::new(2, 7)),
+            ("p3", "p2", Weight::new(2, 7)),
+            ("a3", "p3", Weight::new(1, 1)),
         ];
         for edge in &edges {
             network.add_edge(
@@ -255,7 +261,7 @@ mod tests {
                 2,
                 DependencyType::Influence(edge.2.as_f64().unwrap()),
             )
-        };
+        }
 
         let mock_ledger = MockLedger::default();
         let get_weight = Box::new(|m: &DependencyType<f64>| *m.get_weight());
@@ -280,7 +286,8 @@ mod tests {
                 initial_seed,
                 get_weight,
                 set_osrank
-            ).unwrap(),
+            )
+            .unwrap(),
             ()
         );
         assert_eq!(
@@ -296,7 +303,7 @@ mod tests {
                 "id: a1 osrank: 0.025",
                 "id: a2 osrank: 0.2575",
                 "id: a3 osrank: 0.08"
-                ]
+            ]
         );
     }
 }
