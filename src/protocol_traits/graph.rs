@@ -142,6 +142,9 @@ pub trait Graph: Default {
     /// Returns the number of edges for this `Graph`.
     fn edge_count(&self) -> usize;
 
+    /// Returns the number of nodes for this `Graph`.
+    fn node_count(&self) -> usize;
+
     /// Replaces the _metadata_ associated to the input `NodeId`.
     fn set_node_metadata(&mut self, node_id: &Id<Self::Node>, new: Metadata<Self::Node>);
 
