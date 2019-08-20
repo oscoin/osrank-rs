@@ -5,6 +5,8 @@ tags
 *.png
 data/*.csv
 !data/cargo_contributions.csv
+!data/cargo_contributions_bench_sample.csv
 !data/cargo-page-rank.csv
 !data/cargo_dependencies.csv
 !data/cargo_dependencies_meta.csv
+!data/cargo_dependencies_meta_bench_sample.csv
