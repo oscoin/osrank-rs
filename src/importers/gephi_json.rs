@@ -3,7 +3,8 @@ extern crate serde;
 extern crate serde_json;
 
 use crate::protocol_traits::graph::Graph;
-use crate::types::{ArtifactType, DependencyType, Network, Weight};
+use crate::types::network::{ArtifactType, DependencyType, Network};
+use crate::types::Weight;
 use num_traits::Zero;
 use serde::Deserialize;
 use serde_json::Value;

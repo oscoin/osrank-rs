@@ -10,7 +10,7 @@ use crate::adjacency::new_network_matrix;
 use crate::linalg::SparseMatrix;
 use crate::protocol_traits::graph::Graph;
 use crate::protocol_traits::ledger::LedgerView;
-use crate::types::{Artifact, ArtifactType, Dependency, DependencyType};
+use crate::types::network::{Artifact, ArtifactType, Dependency, DependencyType};
 use core::fmt;
 use num_traits::{Num, One, Zero};
 use serde::Deserialize;
@@ -190,7 +190,7 @@ impl From<csv::Error> for CsvImportError {
 /// ```rust, no_run
 /// use osrank::protocol_traits::ledger::MockLedger;
 /// use osrank::importers::csv::import_network;
-/// use osrank::types::Network;
+/// use osrank::types::network::Network;
 /// use std::fs::File;
 ///
 /// type MockNetwork = Network<f64>;
@@ -378,7 +378,7 @@ mod tests {
 
     use crate::protocol_traits::graph::Graph;
     use crate::protocol_traits::ledger::MockLedger;
-    use crate::types::{ArtifactType, DependencyType, Network};
+    use crate::types::network::{ArtifactType, DependencyType, Network};
     use num_traits::Zero;
     use std::io::{Seek, Write};
     use tempfile::tempfile;
