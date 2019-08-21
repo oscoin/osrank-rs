@@ -8,7 +8,8 @@ extern crate sprs;
 
 use crate::protocol_traits::graph::{Graph, GraphObject, Id, Metadata};
 use crate::protocol_traits::ledger::LedgerView;
-use crate::types::{Osrank, RandomWalk, RandomWalks, SeedSet};
+use crate::types::walk::{RandomWalk, RandomWalks, SeedSet};
+use crate::types::Osrank;
 use fraction::Fraction;
 use rand::distributions::WeightedError;
 use rand::seq::SliceRandom;
@@ -172,7 +173,8 @@ mod tests {
 
     use super::*;
     use crate::protocol_traits::ledger::MockLedger;
-    use crate::types::{Artifact, ArtifactType, DependencyType, Network, Weight};
+    use crate::types::network::{Artifact, ArtifactType, DependencyType, Network};
+    use crate::types::Weight;
     use num_traits::Zero;
     use rand_xorshift::XorShiftRng;
 
