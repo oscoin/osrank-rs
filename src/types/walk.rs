@@ -8,6 +8,7 @@ extern crate petgraph;
 
 use fnv::FnvHashMap;
 use std::hash::Hash;
+use std::ops::Deref;
 use std::rc::Rc;
 
 #[derive(Debug, Default)]
@@ -15,7 +16,7 @@ pub struct RandomWalks<Id>
 where
     Id: Hash + Eq,
 {
-    /// A `HashMap` between the source of the walk and the walk itself.
+    /// A collection of random walks.
     random_walks: Vec<RandomWalk<Id>>,
 }
 
@@ -41,22 +42,65 @@ where
         self.random_walks.len() == 0
     }
 
-    pub fn count_visits(&self, idx: Id) -> NumVisits {
+    /// Counts the number of visits for the given element *in all walks*.
+    ///
+    /// ```
+    /// use osrank::types::walk::*;
+    ///
+    /// let ids = vec!["a", "b", "c", "c", "a", "a"];
+    /// let mut walks: RandomWalks<String> = RandomWalks::new();
+    ///
+    /// for i in ids {
+    ///     let mut walk = RandomWalk::new(String::from(i));
+    ///     walk.add_next(String::from(i));
+    ///     walks.add_walk(walk);
+    /// }
+    ///
+    /// assert_eq!(walks.count_visits(&String::from("c")), 4);
+    /// ```
+    pub fn count_visits(&self, idx: &Id) -> Count {
         self.random_walks
             .iter()
-            .fold(0, |acc, rw| acc + rw.count_visits(&idx))
+            .map(|rw| rw.count_visits(idx))
+            .sum()
+    }
+
+    /// Counts the number of walks that originates from the input element.
+    ///
+    /// ```
+    /// use osrank::types::walk::*;
+    ///
+    /// let ids = vec!["a", "b", "c", "c", "a", "a"];
+    /// let mut walks: RandomWalks<String> = RandomWalks::new();
+    ///
+    /// for i in ids {
+    ///     let mut walk = RandomWalk::new(String::from(i));
+    ///     walk.add_next(String::from(i));
+    ///     walks.add_walk(walk);
+    /// }
+    ///
+    /// assert_eq!(walks.count_walks_from(&String::from("c")), 2);
+    /// ```
+    pub fn count_walks_from(&self, source: &Id) -> Count {
+        self.random_walks
+            .iter()
+            .filter(|rw| rw.random_walk_source.deref() == source)
+            .count()
     }
 }
 
-type NumVisits = usize;
+type Count = usize;
 
 #[derive(Debug)]
+/// A random walk over a `Graph`. Each walk stores the source of the walk as
+/// well as a mapping between a certain node `Id` and the number of visits on
+/// that element.
 pub struct RandomWalk<Id>
 where
     Id: Hash + Eq,
 {
     random_walk_source: Rc<Id>,
-    random_walk_visits: FnvHashMap<Rc<Id>, NumVisits>,
+    random_walk_visits: FnvHashMap<Rc<Id>, Count>,
 }
 
 impl<Id> RandomWalk<Id>
@@ -87,7 +131,7 @@ where
     }
 
     /// Returns the number of visits of the given segment in the walk.
-    pub fn count_visits(&self, idx: &Id) -> NumVisits {
+    pub fn count_visits(&self, idx: &Id) -> Count {
         *self.random_walk_visits.get(idx).unwrap_or(&0)
     }
 
@@ -150,6 +194,19 @@ mod tests {
         w.add_next(n1);
         assert_eq!(w.source_from(&"bar"), Some(&"foo"));
         assert_eq!(w.source_from(&"baz"), None);
+    }
+
+    #[test]
+    fn random_walks_count_walks_from() {
+        let ids = vec!["a", "b", "c", "a", "a"];
+        let mut walks: RandomWalks<String> = RandomWalks::new();
+
+        for i in ids {
+            let walk = RandomWalk::new(String::from(i));
+            walks.add_walk(walk);
+        }
+
+        assert_eq!(walks.count_walks_from(&String::from("a")), 3);
     }
 
 }
