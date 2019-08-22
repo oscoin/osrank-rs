@@ -40,6 +40,7 @@ build-binary = ["reqwest", "clap", "failure", "failure_derive"]
 num-traits = "^0.2"
 derive_more = "^0.13"
 itertools = "^0.8.0"
+fnv = "^1.0.3"
 
 #Importers/exporters crates
 csv = "^1.1"
