@@ -5,6 +5,7 @@ extern crate fraction;
 extern crate num_traits;
 extern crate petgraph;
 
+use num_traits::Zero;
 use std::collections::HashMap;
 use std::fmt;
 use std::fs::OpenOptions;
@@ -110,6 +111,29 @@ where
 pub struct Artifact<Id: Clone> {
     id: Id,
     artifact_type: ArtifactType,
+}
+
+impl<Id> Artifact<Id>
+where
+    Id: Clone,
+{
+    pub fn new_account(id: Id) -> Self {
+        Artifact {
+            id,
+            artifact_type: ArtifactType::Account {
+                osrank: Zero::zero(),
+            },
+        }
+    }
+
+    pub fn new_project(id: Id) -> Self {
+        Artifact {
+            id,
+            artifact_type: ArtifactType::Project {
+                osrank: Zero::zero(),
+            },
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialOrd, PartialEq, Eq)]

@@ -6,10 +6,11 @@ extern crate petgraph;
 extern crate rand;
 extern crate sprs;
 
-use crate::protocol_traits::graph::{Graph, GraphObject, Id, Metadata, Nodes};
+use crate::protocol_traits::graph::{Graph, GraphObject, Id, Metadata};
 use crate::protocol_traits::ledger::LedgerView;
 use crate::types::walk::{RandomWalk, RandomWalks, SeedSet};
 use crate::types::Osrank;
+use core::iter::Iterator;
 use fraction::Fraction;
 use rand::distributions::WeightedError;
 use rand::seq::SliceRandom;
@@ -28,9 +29,9 @@ where
     walks: RandomWalks<I>,
 }
 
-fn walks<'a, L, G, RNG>(
-    starting_nodes: Nodes<G::Node>,
-    network: &'a G,
+fn walks<'a, L, G: 'a, RNG>(
+    starting_nodes: impl Iterator<Item = &'a Id<G::Node>>,
+    network: &G,
     ledger_view: &L,
     mut rng: RNG,
     get_weight: &Box<Fn(&<G::Edge as GraphObject>::Metadata) -> f64>,
@@ -44,8 +45,8 @@ where
     let mut walks = RandomWalks::new();
     for i in starting_nodes {
         for _ in 0..(*ledger_view.get_random_walks_num()) {
-            let mut walk = RandomWalk::new(i.id().clone());
-            let mut current_node = i.id();
+            let mut walk = RandomWalk::new(i.clone());
+            let mut current_node = i;
             // TODO distinguish account/project
             // TODO Should there be a safeguard so this doesn't run forever?
             while rng.gen::<f64>() < ledger_view.get_damping_factors().project {
@@ -74,9 +75,9 @@ where
 // Dependency<W>, for I have ran into a cryptic error about the SampleBorrow
 // trait not be implemented, and wasn't able to immediately make the code
 // typecheck.
-pub fn random_walk<'a, L, G, RNG>(
-    seed_set: Option<Nodes<G::Node>>,
-    network: &'a G,
+pub fn random_walk<L, G, RNG>(
+    seed_set: Option<SeedSet<Id<G::Node>>>,
+    network: &G,
     ledger_view: &L,
     rng: RNG,
     get_weight: &Box<Fn(&<G::Edge as GraphObject>::Metadata) -> f64>,
@@ -89,7 +90,7 @@ where
 {
     match seed_set {
         Some(seeds) => {
-            let walks = walks(seeds, network, ledger_view, rng, get_weight);
+            let walks = walks(seeds.into_iter(), network, ledger_view, rng, get_weight);
             let mut trusted_nodes: Vec<&G::Node> = Vec::new();
             for node in network.nodes() {
                 if rank_node::<L, G>(&walks, node.id().clone(), ledger_view)
@@ -105,9 +106,10 @@ where
         }
         None => {
             let whole_network = (*network).clone(); // FIXME, terrible.
+            let all_node_ids = network.nodes().map(|n| n.id());
             let res = WalkResult {
                 network_view: whole_network,
-                walks: walks(network.nodes(), network, ledger_view, rng, get_weight),
+                walks: walks(all_node_ids, network, ledger_view, rng, get_weight),
             };
 
             Ok(res)
@@ -119,7 +121,7 @@ where
 /// set W of random walks, iterates over each edge of the Network and computes
 /// the osrank.
 pub fn osrank_naive<L, G, RNG>(
-    seed_set: Option<Nodes<G::Node>>,
+    seed_set: Option<SeedSet<Id<G::Node>>>,
     network: &mut G,
     ledger_view: &L,
     initial_seed: <RNG as SeedableRng>::Seed,
@@ -238,7 +240,11 @@ mod tests {
                 },
             )
         }
-        for node in &["a1", "a2", "a3"] {
+
+        // Create the seed set from all projects
+        let seed_set = SeedSet::from(vec!["p1".to_string(), "p2".to_string(), "p3".to_string()]);
+
+        for node in &["a1", "a2", "a3", "isle"] {
             network.add_node(
                 node.to_string(),
                 ArtifactType::Account {
@@ -285,7 +291,7 @@ mod tests {
 
         assert_eq!(
             osrank_naive::<MockLedger, MockNetwork, XorShiftRng>(
-                None,
+                Some(seed_set),
                 &mut network,
                 &mock_ledger,
                 initial_seed,
@@ -307,8 +313,10 @@ mod tests {
                 "id: p3 osrank: 0.1975",
                 "id: a1 osrank: 0.025",
                 "id: a2 osrank: 0.2575",
-                "id: a3 osrank: 0.08"
+                "id: a3 osrank: 0.08",
+                "id: isle osrank: 0"
             ]
         );
     }
+
 }

@@ -170,7 +170,6 @@ pub struct Nodes<'a, N: 'a> {
 
 pub struct NodesMut<'a, N: 'a> {
     pub range: std::vec::IntoIter<&'a mut N>,
-    // pub to_node_id: Box<(FnMut(usize) -> &'a mut N) + 'a>,
 }
 
 impl<'a, N: 'a> Iterator for Nodes<'a, N> {
