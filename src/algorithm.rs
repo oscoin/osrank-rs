@@ -14,12 +14,16 @@ use fraction::Fraction;
 use rand::distributions::WeightedError;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
+use std::hash::Hash;
 
 #[derive(Debug)]
 pub enum OsrankError {}
 
 #[derive(Debug)]
-pub struct WalkResult<'a, G, I> {
+pub struct WalkResult<'a, G, I>
+where
+    I: Eq + Hash,
+{
     pub network_view: &'a G,
     pub walks: RandomWalks<I>,
 }
@@ -38,7 +42,7 @@ pub fn random_walk<'a, L, G, RNG>(
 where
     L: LedgerView,
     G: Graph,
-    Id<G::Node>: Clone + PartialEq,
+    Id<G::Node>: Clone + Eq + Hash,
     RNG: Rng + SeedableRng,
 {
     match seed_set {
@@ -47,8 +51,7 @@ where
             let mut walks = RandomWalks::new();
             for i in network.nodes() {
                 for _ in 0..(*ledger_view.get_random_walks_num()) {
-                    let mut walk = RandomWalk::new();
-                    walk.add_next(i.id().clone());
+                    let mut walk = RandomWalk::new(i.id().clone());
                     let mut current_node = i.id();
                     // TODO distinguish account/project
                     // TODO Should there be a safeguard so this doesn't run forever?
@@ -96,7 +99,7 @@ pub fn osrank_naive<L, G, RNG>(
 where
     L: LedgerView,
     G: Graph,
-    Id<G::Node>: Clone + PartialEq,
+    Id<G::Node>: Clone + Eq + Hash,
     RNG: Rng + SeedableRng,
     <RNG as SeedableRng>::Seed: Clone,
 {
@@ -152,11 +155,11 @@ pub fn rank_network<'a, L, G: 'a>(
 where
     L: LedgerView,
     G: Graph,
-    <G::Node as GraphObject>::Id: PartialEq + Clone,
+    <G::Node as GraphObject>::Id: Eq + Clone + Hash,
 {
     for node in network_view.nodes_mut() {
         let total_walks = random_walks.len();
-        let node_visits = &random_walks.count_visits(node.id().clone());
+        let node_visits = &random_walks.count_visits(&node.id());
         let rank = Fraction::from(1.0 - ledger_view.get_damping_factors().project)
             * Osrank::new(*node_visits as u32, total_walks as u32);
 
