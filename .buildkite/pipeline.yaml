@@ -1,5 +1,12 @@
 steps:
-  - command: 'cargo test --features build-binary --all'
+  - label: "Tests"
+    command: 'cargo test --features build-binary --all'
+    env:
+      DOCKER_IMAGE: "gcr.io/opensourcecoin/osrank-build:rustc-1.36.0"
+    agents:
+      docker: "true"
+  - label: "Compile benchmarks (no-run)"
+    command: 'cargo bench --no-run'
     env:
       DOCKER_IMAGE: "gcr.io/opensourcecoin/osrank-build:rustc-1.36.0"
     agents:
