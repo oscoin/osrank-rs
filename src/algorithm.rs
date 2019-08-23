@@ -253,8 +253,8 @@ mod tests {
             )
         }
         let edges = [
-            ("a1", "p2", Weight::new(3, 7)),
-            ("p1", "p2", Weight::new(1, 1)),
+            ("p1", "a1", Weight::new(3, 7)),
+            ("a1", "p1", Weight::new(1, 1)),
             ("p1", "p2", Weight::new(4, 7)),
             ("p2", "a2", Weight::new(1, 1)),
             ("a2", "p2", Weight::new(1, 3)),
@@ -308,12 +308,12 @@ mod tests {
                 ranks
             }),
             vec![
-                "id: p1 osrank: 0.087",
-                "id: p2 osrank: 0.27",
-                "id: p3 osrank: 0.198",
-                "id: a1 osrank: 0",
-                "id: a2 osrank: 0.276",
-                "id: a3 osrank: 0.069",
+                "id: p1 osrank: 0.1425",
+                "id: p2 osrank: 0.2225",
+                "id: p3 osrank: 0.1575",
+                "id: a1 osrank: 0.08",
+                "id: a2 osrank: 0.23",
+                "id: a3 osrank: 0.055",
                 "id: isle osrank: 0"
             ]
         );

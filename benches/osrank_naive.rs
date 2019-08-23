@@ -38,8 +38,8 @@ fn construct_network_small() -> Network<f64> {
         )
     }
     let edges = [
-        ("a1", "p2", Weight::new(3, 7)),
-        ("p1", "p2", Weight::new(1, 1)),
+        ("p1", "a1", Weight::new(3, 7)),
+        ("a1", "p1", Weight::new(1, 1)),
         ("p1", "p2", Weight::new(4, 7)),
         ("p2", "a2", Weight::new(1, 1)),
         ("a2", "p2", Weight::new(1, 3)),
