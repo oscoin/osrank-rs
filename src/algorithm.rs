@@ -12,6 +12,7 @@ use crate::types::walk::{RandomWalk, RandomWalks, SeedSet};
 use crate::types::Osrank;
 use core::iter::Iterator;
 use fraction::Fraction;
+use num_traits::Zero;
 use rand::distributions::WeightedError;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -43,6 +44,7 @@ where
     RNG: Rng + SeedableRng,
 {
     let mut walks = RandomWalks::new();
+
     for i in starting_nodes {
         for _ in 0..(*ledger_view.get_random_walks_num()) {
             let mut walk = RandomWalk::new(i.clone());
@@ -91,16 +93,14 @@ where
     match seed_set {
         Some(seeds) => {
             let walks = walks(seeds.into_iter(), network, ledger_view, rng, get_weight);
-            let mut trusted_nodes: Vec<&G::Node> = Vec::new();
+            let mut trusted_node_ids: Vec<&Id<G::Node>> = Vec::new();
             for node in network.nodes() {
-                if rank_node::<L, G>(&walks, node.id().clone(), ledger_view)
-                    > Osrank::new(0u32, 0u32)
-                {
-                    trusted_nodes.push(&node);
+                if rank_node::<L, G>(&walks, node.id().clone(), ledger_view) > Osrank::zero() {
+                    trusted_node_ids.push(&node.id());
                 }
             }
             Ok(WalkResult {
-                network_view: network.subgraph_by_nodes(trusted_nodes),
+                network_view: network.subgraph_by_nodes(trusted_node_ids),
                 walks,
             })
         }
@@ -308,12 +308,12 @@ mod tests {
                 ranks
             }),
             vec![
-                "id: p1 osrank: 0.08",
-                "id: p2 osrank: 0.2475",
-                "id: p3 osrank: 0.1975",
-                "id: a1 osrank: 0.025",
-                "id: a2 osrank: 0.2575",
-                "id: a3 osrank: 0.08",
+                "id: p1 osrank: 0.087",
+                "id: p2 osrank: 0.27",
+                "id: p3 osrank: 0.198",
+                "id: a1 osrank: 0",
+                "id: a2 osrank: 0.276",
+                "id: a3 osrank: 0.069",
                 "id: isle osrank: 0"
             ]
         );

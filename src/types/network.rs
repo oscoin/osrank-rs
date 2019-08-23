@@ -7,6 +7,7 @@ extern crate petgraph;
 
 use num_traits::Zero;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fmt;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -349,21 +350,33 @@ where
         }
     }
 
-    fn subgraph_by_nodes(&self, sub_nodes: Vec<&Artifact<String>>) -> Self {
-        // TODO filter_map might not keep the same index if nodes are removed. An alternative to subgraph could
-        // be to add a metadata to the graph `trusted` and only use `trusted_neighbours` in phase 2
-        let mut sub_network = self.clone();
-        let sub_graph = sub_network.from_graph.filter_map(
-            |_id, node| {
-                if sub_nodes.iter().any(|sn| sn.id() == node.id()) {
-                    Some(node.clone())
-                } else {
-                    None
-                }
-            },
-            |_id, edge| Some(edge.clone()),
-        );
-        sub_network.from_graph = sub_graph;
+    fn subgraph_by_nodes(&self, sub_nodes: Vec<&String>) -> Self {
+        let mut sub_network = Network::default();
+
+        for graph_node_id in &sub_nodes {
+            let petgraph_node_id = &self.node_ids[*graph_node_id];
+            let node = &self.from_graph[*petgraph_node_id].clone();
+
+            sub_network.add_node(node.id().to_string(), node.get_metadata().clone());
+        }
+
+        // Once we have added all the nodes, we can now add all the edges
+        for graph_node_id in sub_nodes {
+            for graph_edge_ref in self.neighbours(graph_node_id) {
+                let graph_edge_target = graph_edge_ref.target.clone();
+                let graph_edge_id = graph_edge_ref.id;
+                let petgraph_edge_id = &self.edge_ids[&graph_edge_id];
+                let edge_object = &self.from_graph[*petgraph_edge_id];
+
+                sub_network.add_edge(
+                    graph_node_id,
+                    &graph_edge_target,
+                    *graph_edge_id,
+                    edge_object.get_metadata().clone(),
+                );
+            }
+        }
+
         sub_network
     }
 }
