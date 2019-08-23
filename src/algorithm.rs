@@ -27,7 +27,7 @@ where
     I: Eq + Hash,
 {
     network_view: G,
-    walks: RandomWalks<I>,
+    pub walks: RandomWalks<I>,
 }
 
 fn walks<'a, L, G: 'a, RNG>(
@@ -35,7 +35,7 @@ fn walks<'a, L, G: 'a, RNG>(
     network: &G,
     ledger_view: &L,
     mut rng: RNG,
-    get_weight: &Box<Fn(&<G::Edge as GraphObject>::Metadata) -> f64>,
+    get_weight: &dyn Fn(&<G::Edge as GraphObject>::Metadata) -> f64,
 ) -> RandomWalks<Id<G::Node>>
 where
     L: LedgerView,
@@ -82,7 +82,7 @@ pub fn random_walk<L, G, RNG>(
     network: &G,
     ledger_view: &L,
     rng: RNG,
-    get_weight: &Box<Fn(&<G::Edge as GraphObject>::Metadata) -> f64>,
+    get_weight: &dyn Fn(&<G::Edge as GraphObject>::Metadata) -> f64,
 ) -> Result<WalkResult<G, <G::Node as GraphObject>::Id>, OsrankError>
 where
     L: LedgerView,
@@ -92,7 +92,7 @@ where
 {
     match seed_set {
         Some(seeds) => {
-            let walks = walks(seeds.into_iter(), network, ledger_view, rng, get_weight);
+            let walks = walks(seeds.seedset_iter(), network, ledger_view, rng, get_weight);
             let mut trusted_node_ids: Vec<&Id<G::Node>> = Vec::new();
             for node in network.nodes() {
                 if rank_node::<L, G>(&walks, node.id().clone(), ledger_view) > Osrank::zero() {
@@ -125,8 +125,8 @@ pub fn osrank_naive<L, G, RNG>(
     network: &mut G,
     ledger_view: &L,
     initial_seed: <RNG as SeedableRng>::Seed,
-    get_weight: Box<Fn(&<G::Edge as GraphObject>::Metadata) -> f64>,
-    from_osrank: Box<(Fn(&G::Node, Osrank) -> Metadata<G::Node>)>,
+    get_weight: Box<dyn Fn(&<G::Edge as GraphObject>::Metadata) -> f64>,
+    from_osrank: Box<dyn Fn(&G::Node, Osrank) -> Metadata<G::Node>>,
 ) -> Result<(), OsrankError>
 where
     L: LedgerView,
@@ -198,7 +198,7 @@ pub fn rank_network<'a, L, G: 'a>(
     random_walks: &RandomWalks<Id<G::Node>>,
     network_view: &'a mut G,
     ledger_view: &L,
-    from_osrank: &Box<(Fn(&G::Node, Osrank) -> Metadata<G::Node>)>,
+    from_osrank: &dyn Fn(&G::Node, Osrank) -> Metadata<G::Node>,
 ) -> Result<(), OsrankError>
 where
     L: LedgerView,

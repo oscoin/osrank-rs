@@ -166,7 +166,7 @@ pub type EdgeReferences<'a, N, E> = Vec<EdgeReference<'a, N, E>>;
 
 pub struct Nodes<'a, N: 'a> {
     pub range: Range<usize>,
-    pub to_node_id: Box<(Fn(usize) -> &'a N) + 'a>,
+    pub to_node_id: Box<dyn (Fn(usize) -> &'a N) + 'a>,
 }
 
 pub struct NodesMut<'a, N: 'a> {

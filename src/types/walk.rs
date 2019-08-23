@@ -169,7 +169,7 @@ impl<I> SeedSet<I> {
         self.trusted_nodes.is_empty()
     }
 
-    pub fn into_iter(&self) -> SeedSetIter<I> {
+    pub fn seedset_iter(&self) -> SeedSetIter<I> {
         SeedSetIter {
             range: 0..self.trusted_nodes.len(),
             inner: &self.trusted_nodes,
