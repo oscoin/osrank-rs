@@ -115,7 +115,7 @@ fn extract_metadata(
     Ok(())
 }
 
-fn by_platform<'a>(platform: &'a str) -> Box<FnMut(&StringRecord) -> bool + 'a> {
+fn by_platform<'a>(platform: &'a str) -> Box<dyn FnMut(&StringRecord) -> bool + 'a> {
     Box::new(move |e| e[1] == *platform)
 }
 
