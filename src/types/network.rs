@@ -236,6 +236,13 @@ where
         ))?;
         Ok(())
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.from_graph.node_count() == 0
+            && self.from_graph.edge_count() == 0
+            && self.node_ids.is_empty()
+            && self.edge_ids.is_empty()
+    }
 }
 
 impl<W> Graph for Network<W>
@@ -353,13 +360,14 @@ where
         let mut sub_network = Network::default();
 
         for graph_node_id in &sub_nodes {
-            let petgraph_node_id = &self.node_ids[*graph_node_id];
-            let node = &self.from_graph[*petgraph_node_id].clone();
-
-            sub_network.add_node(node.id().to_string(), node.get_metadata().clone());
+            // Add the node only if `graph_node_id` exists.
+            if let Some(petgraph_node_id) = &self.node_ids.get(*graph_node_id) {
+                let node = &self.from_graph[**petgraph_node_id].clone();
+                sub_network.add_node(node.id().to_string(), node.get_metadata().clone());
+            }
         }
 
-        // Once we have added all the nodes, we can now add all the edges
+        // Once we have added all the nodes, we can now add all the edges.
         for graph_node_id in sub_nodes {
             for graph_edge_ref in self.neighbours(graph_node_id) {
                 let graph_edge_target = graph_edge_ref.target.clone();
@@ -367,12 +375,16 @@ where
                 let petgraph_edge_id = &self.edge_ids[&graph_edge_id];
                 let edge_object = &self.from_graph[*petgraph_edge_id];
 
-                sub_network.add_edge(
-                    graph_node_id,
-                    &graph_edge_target,
-                    *graph_edge_id,
-                    edge_object.get_metadata().clone(),
-                );
+                // Due to the fact not all edges might start or end in a node which
+                // exist, we have to explictly check.
+                if sub_network.node_ids.get(&graph_edge_target).is_some() {
+                    sub_network.add_edge(
+                        graph_node_id,
+                        &graph_edge_target,
+                        *graph_edge_id,
+                        edge_object.get_metadata().clone(),
+                    );
+                }
             }
         }
 
@@ -395,4 +407,59 @@ where
             println!("{}", arti);
         }
     }
+}
+
+mod tests {
+
+    use super::*;
+    use crate::types::Weight;
+
+    fn network_fixture() -> Network<f64> {
+        let mut network = Network::default();
+
+        for node in &["p1", "p2", "p3"] {
+            let a = Artifact::new_project(node.to_string());
+            network.add_node(a.id().clone(), a.get_metadata().clone());
+        }
+
+        let edges = [
+            ("p1", "p2", Weight::new(1, 1)),
+            ("p1", "p2", Weight::new(4, 7)),
+            ("p3", "p1", Weight::new(2, 7)),
+            ("p3", "p2", Weight::new(2, 7)),
+        ];
+
+        for edge in &edges {
+            network.add_edge(
+                &edge.0.to_string(),
+                &edge.1.to_string(),
+                2,
+                DependencyType::Influence(edge.2.as_f64().unwrap()),
+            )
+        }
+
+        network
+    }
+
+    #[test]
+    fn subgraph_by_nodes_empty_subnodes() {
+        let graph = network_fixture();
+        let subgraph = graph.subgraph_by_nodes(vec![]);
+        assert_eq!(subgraph.is_empty(), true);
+    }
+
+    #[test]
+    fn subgraph_by_nodes_single_node() {
+        let graph = network_fixture();
+        let subgraph = graph.subgraph_by_nodes(vec![&"p1".to_string()]);
+        assert_eq!(subgraph.is_empty(), false);
+    }
+
+    #[test]
+    fn subgraph_by_nodes_not_existent_node() {
+        let graph = network_fixture();
+        let subgraph = graph.subgraph_by_nodes(vec![&"bar".to_string()]);
+        assert_eq!(subgraph.is_empty(), true);
+    }
+
 }
