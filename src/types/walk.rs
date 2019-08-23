@@ -146,8 +146,51 @@ where
     }
 }
 
-// Just an alias for now.
-pub type SeedSet = ();
+/// A set of trusted nodes, used to perform walks over the graph. This set has
+/// two purposes:
+///
+/// 1. It allows pruning of the input `Graph`, so that nodes falling below
+///    a certain threshold are discarded and not used in the actual osrank
+///    calculation;
+/// 2. Ensure that the entire `Graph` is explored and that random walks
+///    eventually "explore" all the nodes.
+pub struct SeedSet<Id> {
+    trusted_nodes: Vec<Id>,
+}
+
+impl<I> SeedSet<I> {
+    pub fn from(nodes: Vec<I>) -> Self {
+        SeedSet {
+            trusted_nodes: nodes,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.trusted_nodes.is_empty()
+    }
+
+    pub fn into_iter(&self) -> SeedSetIter<I> {
+        SeedSetIter {
+            range: 0..self.trusted_nodes.len(),
+            inner: &self.trusted_nodes,
+        }
+    }
+}
+
+pub struct SeedSetIter<'a, I> {
+    range: std::ops::Range<usize>,
+    inner: &'a Vec<I>,
+}
+
+impl<'a, I> Iterator for SeedSetIter<'a, I> {
+    type Item = &'a I;
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.range.next() {
+            None => None,
+            Some(ix) => Some(&self.inner[ix]),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

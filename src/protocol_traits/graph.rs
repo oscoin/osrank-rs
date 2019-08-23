@@ -150,8 +150,12 @@ pub trait Graph: Default {
 
     /// Replaces the _metadata_ associated to the input `EdgeId`.
     fn set_edge_metadata(&mut self, edge_id: &Id<Self::Edge>, new: Metadata<Self::Edge>);
+
+    /// Creates a subgraph of on the nodes of `sub_nodes` of `self`.
+    fn subgraph_by_nodes(&self, sub_nodes: Vec<&Id<Self::Node>>) -> Self;
 }
 
+#[derive(Debug)]
 pub struct EdgeReference<'a, NodeId, EdgeId> {
     pub source: &'a NodeId,
     pub target: &'a NodeId,
@@ -167,7 +171,6 @@ pub struct Nodes<'a, N: 'a> {
 
 pub struct NodesMut<'a, N: 'a> {
     pub range: std::vec::IntoIter<&'a mut N>,
-    // pub to_node_id: Box<(FnMut(usize) -> &'a mut N) + 'a>,
 }
 
 impl<'a, N: 'a> Iterator for Nodes<'a, N> {

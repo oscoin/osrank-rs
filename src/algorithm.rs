@@ -10,7 +10,9 @@ use crate::protocol_traits::graph::{Graph, GraphObject, Id, Metadata};
 use crate::protocol_traits::ledger::LedgerView;
 use crate::types::walk::{RandomWalk, RandomWalks, SeedSet};
 use crate::types::Osrank;
+use core::iter::Iterator;
 use fraction::Fraction;
+use num_traits::Zero;
 use rand::distributions::WeightedError;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -20,64 +22,94 @@ use std::hash::Hash;
 pub enum OsrankError {}
 
 #[derive(Debug)]
-pub struct WalkResult<'a, G, I>
+pub struct WalkResult<G, I>
 where
     I: Eq + Hash,
 {
-    pub network_view: &'a G,
-    pub walks: RandomWalks<I>,
+    network_view: G,
+    walks: RandomWalks<I>,
 }
 
-// FIXME(adn) It should be possible to make this code parametric over
-// Dependency<W>, for I have ran into a cryptic error about the SampleBorrow
-// trait not be implemented, and wasn't able to immediately make the code
-// typecheck.
-pub fn random_walk<'a, L, G, RNG>(
-    seed_set: Option<SeedSet>,
-    network: &'a G,
+fn walks<'a, L, G: 'a, RNG>(
+    starting_nodes: impl Iterator<Item = &'a Id<G::Node>>,
+    network: &G,
     ledger_view: &L,
     mut rng: RNG,
     get_weight: &Box<Fn(&<G::Edge as GraphObject>::Metadata) -> f64>,
-) -> Result<WalkResult<'a, G, <G::Node as GraphObject>::Id>, OsrankError>
+) -> RandomWalks<Id<G::Node>>
 where
     L: LedgerView,
     G: Graph,
     Id<G::Node>: Clone + Eq + Hash,
     RNG: Rng + SeedableRng,
 {
-    match seed_set {
-        Some(_) => unimplemented!(),
-        None => {
-            let mut walks = RandomWalks::new();
-            for i in network.nodes() {
-                for _ in 0..(*ledger_view.get_random_walks_num()) {
-                    let mut walk = RandomWalk::new(i.id().clone());
-                    let mut current_node = i.id();
-                    // TODO distinguish account/project
-                    // TODO Should there be a safeguard so this doesn't run forever?
-                    while rng.gen::<f64>() < ledger_view.get_damping_factors().project {
-                        let neighbors = network.neighbours(&current_node);
-                        match neighbors.choose_weighted(&mut rng, |item| {
-                            network
-                                .lookup_edge_metadata(&item.id)
-                                .and_then(|m| Some(get_weight(m)))
-                                .unwrap()
-                        }) {
-                            Ok(next_edge) => {
-                                walk.add_next(next_edge.target.clone());
-                                current_node = next_edge.target;
-                            }
-                            Err(WeightedError::NoItem) => break,
-                            Err(error) => panic!("Problem with the neighbors: {:?}", error),
-                        }
+    let mut walks = RandomWalks::new();
+
+    for i in starting_nodes {
+        for _ in 0..(*ledger_view.get_random_walks_num()) {
+            let mut walk = RandomWalk::new(i.clone());
+            let mut current_node = i;
+            // TODO distinguish account/project
+            // TODO Should there be a safeguard so this doesn't run forever?
+            while rng.gen::<f64>() < ledger_view.get_damping_factors().project {
+                let neighbors = network.neighbours(&current_node);
+                match neighbors.choose_weighted(&mut rng, |item| {
+                    network
+                        .lookup_edge_metadata(&item.id)
+                        .and_then(|m| Some(get_weight(m)))
+                        .unwrap()
+                }) {
+                    Ok(next_edge) => {
+                        walk.add_next(next_edge.target.clone());
+                        current_node = next_edge.target;
                     }
-                    walks.add_walk(walk);
+                    Err(WeightedError::NoItem) => break,
+                    Err(error) => panic!("Problem with the neighbors: {:?}", error),
                 }
             }
+            walks.add_walk(walk);
+        }
+    }
+    walks
+}
 
-            let res = WalkResult {
-                network_view: network,
+// FIXME(adn) It should be possible to make this code parametric over
+// Dependency<W>, for I have ran into a cryptic error about the SampleBorrow
+// trait not be implemented, and wasn't able to immediately make the code
+// typecheck.
+pub fn random_walk<L, G, RNG>(
+    seed_set: Option<SeedSet<Id<G::Node>>>,
+    network: &G,
+    ledger_view: &L,
+    rng: RNG,
+    get_weight: &Box<Fn(&<G::Edge as GraphObject>::Metadata) -> f64>,
+) -> Result<WalkResult<G, <G::Node as GraphObject>::Id>, OsrankError>
+where
+    L: LedgerView,
+    G: Graph + Clone,
+    Id<G::Node>: Clone + Eq + Hash,
+    RNG: Rng + SeedableRng,
+{
+    match seed_set {
+        Some(seeds) => {
+            let walks = walks(seeds.into_iter(), network, ledger_view, rng, get_weight);
+            let mut trusted_node_ids: Vec<&Id<G::Node>> = Vec::new();
+            for node in network.nodes() {
+                if rank_node::<L, G>(&walks, node.id().clone(), ledger_view) > Osrank::zero() {
+                    trusted_node_ids.push(&node.id());
+                }
+            }
+            Ok(WalkResult {
+                network_view: network.subgraph_by_nodes(trusted_node_ids),
                 walks,
+            })
+        }
+        None => {
+            let whole_network = (*network).clone(); // FIXME, terrible.
+            let all_node_ids = network.nodes().map(|n| n.id());
+            let res = WalkResult {
+                network_view: whole_network,
+                walks: walks(all_node_ids, network, ledger_view, rng, get_weight),
             };
 
             Ok(res)
@@ -89,7 +121,7 @@ where
 /// set W of random walks, iterates over each edge of the Network and computes
 /// the osrank.
 pub fn osrank_naive<L, G, RNG>(
-    seed_set: Option<SeedSet>,
+    seed_set: Option<SeedSet<Id<G::Node>>>,
     network: &mut G,
     ledger_view: &L,
     initial_seed: <RNG as SeedableRng>::Seed,
@@ -98,7 +130,7 @@ pub fn osrank_naive<L, G, RNG>(
 ) -> Result<(), OsrankError>
 where
     L: LedgerView,
-    G: Graph,
+    G: Graph + Clone,
     Id<G::Node>: Clone + Eq + Hash,
     RNG: Rng + SeedableRng,
     <RNG as SeedableRng>::Seed: Clone,
@@ -120,7 +152,7 @@ where
             // Phase2, compute the osrank only on the NetworkView
             let phase2 = random_walk(
                 None,
-                &*phase1.network_view,
+                &phase1.network_view,
                 ledger_view,
                 RNG::from_seed(initial_seed.clone()),
                 &get_weight,
@@ -146,6 +178,22 @@ where
     }
 }
 
+fn rank_node<L, G>(
+    random_walks: &RandomWalks<Id<G::Node>>,
+    node_id: Id<G::Node>,
+    ledger_view: &L,
+) -> Osrank
+where
+    L: LedgerView,
+    G: Graph,
+    <G::Node as GraphObject>::Id: Eq + Clone + Hash,
+{
+    let total_walks = random_walks.len();
+    let node_visits = random_walks.count_visits(&node_id);
+    Fraction::from(1.0 - ledger_view.get_damping_factors().project)
+        * Osrank::new(node_visits as u32, total_walks as u32)
+}
+
 pub fn rank_network<'a, L, G: 'a>(
     random_walks: &RandomWalks<Id<G::Node>>,
     network_view: &'a mut G,
@@ -158,10 +206,7 @@ where
     <G::Node as GraphObject>::Id: Eq + Clone + Hash,
 {
     for node in network_view.nodes_mut() {
-        let total_walks = random_walks.len();
-        let node_visits = &random_walks.count_visits(&node.id());
-        let rank = Fraction::from(1.0 - ledger_view.get_damping_factors().project)
-            * Osrank::new(*node_visits as u32, total_walks as u32);
+        let rank = rank_node::<L, G>(&random_walks, node.id().clone(), ledger_view);
 
         node.set_metadata(from_osrank(&node, rank))
     }
@@ -187,108 +232,47 @@ mod tests {
     fn everything_ok() {
         // build the example network
         let mut network = Network::default();
-        network.add_node(
-            "p1".to_string(),
-            ArtifactType::Project {
-                osrank: Zero::zero(),
-            },
-        );
-        network.add_node(
-            "p2".to_string(),
-            ArtifactType::Project {
-                osrank: Zero::zero(),
-            },
-        );
-        network.add_node(
-            "p3".to_string(),
-            ArtifactType::Project {
-                osrank: Zero::zero(),
-            },
-        );
-        network.add_node(
-            "a1".to_string(),
-            ArtifactType::Project {
-                osrank: Zero::zero(),
-            },
-        );
-        network.add_node(
-            "a2".to_string(),
-            ArtifactType::Project {
-                osrank: Zero::zero(),
-            },
-        );
-        network.add_node(
-            "a3".to_string(),
-            ArtifactType::Project {
-                osrank: Zero::zero(),
-            },
-        );
-        network.add_edge(
-            &"p1".to_string(),
-            &"a1".to_string(),
-            0,
-            DependencyType::Influence(Weight::new(3, 7).as_f64().unwrap()),
-        );
-        network.add_edge(
-            &"a1".to_string(),
-            &"p1".to_string(),
-            1,
-            DependencyType::Influence(Weight::new(1, 1).as_f64().unwrap()),
-        );
-        network.add_edge(
-            &"p1".to_string(),
-            &"p2".to_string(),
-            2,
-            DependencyType::Influence(Weight::new(4, 7).as_f64().unwrap()),
-        );
-        network.add_edge(
-            &"p2".to_string(),
-            &"a2".to_string(),
-            3,
-            DependencyType::Influence(Weight::new(1, 1).as_f64().unwrap()),
-        );
-        network.add_edge(
-            &"a2".to_string(),
-            &"p2".to_string(),
-            4,
-            DependencyType::Influence(Weight::new(1, 3).as_f64().unwrap()),
-        );
-        network.add_edge(
-            &"a2".to_string(),
-            &"p3".to_string(),
-            5,
-            DependencyType::Influence(Weight::new(2, 3).as_f64().unwrap()),
-        );
-        network.add_edge(
-            &"p3".to_string(),
-            &"a2".to_string(),
-            6,
-            DependencyType::Influence(Weight::new(11, 28).as_f64().unwrap()),
-        );
-        network.add_edge(
-            &"p3".to_string(),
-            &"a3".to_string(),
-            7,
-            DependencyType::Influence(Weight::new(1, 28).as_f64().unwrap()),
-        );
-        network.add_edge(
-            &"p3".to_string(),
-            &"p1".to_string(),
-            8,
-            DependencyType::Influence(Weight::new(2, 7).as_f64().unwrap()),
-        );
-        network.add_edge(
-            &"p3".to_string(),
-            &"p2".to_string(),
-            9,
-            DependencyType::Influence(Weight::new(2, 7).as_f64().unwrap()),
-        );
-        network.add_edge(
-            &"a3".to_string(),
-            &"p3".to_string(),
-            10,
-            DependencyType::Influence(Weight::new(1, 1).as_f64().unwrap()),
-        );
+        for node in &["p1", "p2", "p3"] {
+            network.add_node(
+                node.to_string(),
+                ArtifactType::Project {
+                    osrank: Zero::zero(),
+                },
+            )
+        }
+
+        // Create the seed set from all projects
+        let seed_set = SeedSet::from(vec!["p1".to_string(), "p2".to_string(), "p3".to_string()]);
+
+        for node in &["a1", "a2", "a3", "isle"] {
+            network.add_node(
+                node.to_string(),
+                ArtifactType::Account {
+                    osrank: Zero::zero(),
+                },
+            )
+        }
+        let edges = [
+            ("a1", "p2", Weight::new(3, 7)),
+            ("p1", "p2", Weight::new(1, 1)),
+            ("p1", "p2", Weight::new(4, 7)),
+            ("p2", "a2", Weight::new(1, 1)),
+            ("a2", "p2", Weight::new(1, 3)),
+            ("a2", "p3", Weight::new(2, 3)),
+            ("p3", "a2", Weight::new(11, 28)),
+            ("p3", "a3", Weight::new(1, 28)),
+            ("p3", "p1", Weight::new(2, 7)),
+            ("p3", "p2", Weight::new(2, 7)),
+            ("a3", "p3", Weight::new(1, 1)),
+        ];
+        for edge in &edges {
+            network.add_edge(
+                &edge.0.to_string(),
+                &edge.1.to_string(),
+                2,
+                DependencyType::Influence(edge.2.as_f64().unwrap()),
+            )
+        }
 
         let mock_ledger = MockLedger::default();
         let get_weight = Box::new(|m: &DependencyType<f64>| *m.get_weight());
@@ -307,7 +291,7 @@ mod tests {
 
         assert_eq!(
             osrank_naive::<MockLedger, MockNetwork, XorShiftRng>(
-                None,
+                Some(seed_set),
                 &mut network,
                 &mock_ledger,
                 initial_seed,
@@ -316,6 +300,23 @@ mod tests {
             )
             .unwrap(),
             ()
-        )
+        );
+        assert_eq!(
+            network.nodes().fold(Vec::new(), |mut ranks, node| {
+                // let bla = *node.get_metadata();
+                ranks.push(format!("{}", *node));
+                ranks
+            }),
+            vec![
+                "id: p1 osrank: 0.087",
+                "id: p2 osrank: 0.27",
+                "id: p3 osrank: 0.198",
+                "id: a1 osrank: 0",
+                "id: a2 osrank: 0.276",
+                "id: a3 osrank: 0.069",
+                "id: isle osrank: 0"
+            ]
+        );
     }
+
 }
