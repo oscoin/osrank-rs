@@ -7,7 +7,6 @@ extern crate petgraph;
 
 use num_traits::Zero;
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::fmt;
 use std::fs::OpenOptions;
 use std::io::Write;

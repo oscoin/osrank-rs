@@ -358,14 +358,14 @@ fn is_maintainer(owner: &str, stat: &GithubContribution, stats_len: usize) -> bo
     stat.author.login == owner || { stat.total > 50 } || stats_len as u32 == 1
 }
 
-fn by_platform<'a>(platform: &'a str) -> Box<FnMut(&StringRecord) -> bool + 'a> {
+fn by_platform<'a>(platform: &'a str) -> Box<dyn FnMut(&StringRecord) -> bool + 'a> {
     Box::new(move |e| e[1] == *platform)
 }
 
 // Returns false if the user didn't ask to resume the process from a particular
 // project URL. If the user supplied a project, it skips StringRecord entries
 // until it matches the input URL.
-fn resumes<'a>(resume_from: Option<&'a str>) -> Box<FnMut(&StringRecord) -> bool + 'a> {
+fn resumes<'a>(resume_from: Option<&'a str>) -> Box<dyn FnMut(&StringRecord) -> bool + 'a> {
     Box::new(move |e| match resume_from {
         None => false,
         Some(repo_url) => Some(repo_url) != e.get(9),
