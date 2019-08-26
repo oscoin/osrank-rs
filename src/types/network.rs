@@ -21,6 +21,8 @@ use petgraph::graph::{node_index, EdgeIndex, NodeIndex};
 use petgraph::visit::EdgeRef;
 use petgraph::Directed;
 
+use quickcheck::{Arbitrary, Gen};
+
 #[derive(Debug, Clone)]
 pub struct Dependency<Id: Clone, W: Clone> {
     id: Id,
@@ -147,6 +149,16 @@ impl ArtifactType {
         match self {
             ArtifactType::Project { ref mut osrank } => *osrank = new,
             ArtifactType::Account { ref mut osrank } => *osrank = new,
+        }
+    }
+}
+
+impl Arbitrary for ArtifactType {
+    fn arbitrary<G: Gen>(g: &mut G) -> Self {
+        // TODO: In Haskell's QC we had the `frequency` combinator, which
+        // doesn't seem to exist here (out of the box, at least).
+        ArtifactType::Project {
+            osrank: Osrank::new(g.next_u64(), 1u8),
         }
     }
 }
@@ -409,6 +421,7 @@ where
     }
 }
 
+#[cfg(test)]
 mod tests {
 
     use super::*;
@@ -460,6 +473,13 @@ mod tests {
         let graph = network_fixture();
         let subgraph = graph.subgraph_by_nodes(vec![&"bar".to_string()]);
         assert_eq!(subgraph.is_empty(), true);
+    }
+
+    #[quickcheck]
+    fn artifact_get_set_metadata_roundtrip(meta: ArtifactType) {
+        let mut a = Artifact::new_account("foo");
+        a.set_metadata(meta.clone());
+        assert_eq!(*a.get_metadata(), meta);
     }
 
 }
