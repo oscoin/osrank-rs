@@ -1,10 +1,13 @@
-FROM rust:1.36.0-slim-buster
+FROM rust:1.37.0-slim-buster
 
 # Install additional packages
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libssl-dev \
         pkg-config \
+        zip \
+        llvm-dev \
+        libclang-dev \
     && apt-get autoremove \
     && rm -rf /var/lib/apt/lists/*
 
@@ -12,6 +15,10 @@ RUN apt-get update \
 RUN cargo install sccache \
     && rm -rf /usr/local/cargo/registry \
     && rm /usr/local/cargo/.package-cache
+
+# Install grcov, for code coverage. The second dependency is technically
+# not required but it automate the generation of .gc* files.
+RUN cargo install grcov && cargo install cargo-cov
 
 # Setup defaults for caching
 VOLUME /cache

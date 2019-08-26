@@ -10,3 +10,8 @@ data/*.csv
 !data/cargo_dependencies.csv
 !data/cargo_dependencies_meta.csv
 !data/cargo_dependencies_meta_bench_sample.csv
+
+coverage-report
+lcov.info
+*.gcda
+*.gdno
