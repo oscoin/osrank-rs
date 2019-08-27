@@ -41,8 +41,10 @@ num-traits = "^0.2"
 derive_more = "^0.13"
 itertools = "^0.8.0"
 fnv = "^1.0.3"
-quickcheck = "^0.8"
-quickcheck_macros = "^0.8"
+
+# We need to lock quickcheck to the same version of rand used by this crate.
+quickcheck = "=0.9"
+quickcheck_macros = "=0.8"
 
 #Importers/exporters crates
 csv = "^1.1"

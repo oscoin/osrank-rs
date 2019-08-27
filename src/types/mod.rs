@@ -10,6 +10,7 @@ use num_traits::{Num, One, Signed, Zero};
 use std::fmt;
 use std::ops::{Div, Mul, Rem};
 
+pub mod mock;
 pub mod network;
 pub mod walk;
 

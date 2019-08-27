@@ -15,3 +15,4 @@ pub mod importers;
 pub mod linalg;
 pub mod protocol_traits;
 pub mod types;
+pub mod util;

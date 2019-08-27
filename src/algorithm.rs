@@ -190,8 +190,20 @@ where
 {
     let total_walks = random_walks.len();
     let node_visits = random_walks.count_visits(&node_id);
-    Fraction::from(1.0 - ledger_view.get_damping_factors().project)
-        * Osrank::new(node_visits as u32, total_walks as u32)
+
+    // Avoids division by 0
+    if total_walks == 0 {
+        Osrank::zero()
+    } else {
+        // We don't use Fraction::from(f64), because that generates some
+        // big numbers for the numer & denom, which eventually cause overflow.
+        // What we do instead, is to exploit the fact we have a probability
+        // distribution between 0.0 and 1.0 and we use a simple formula to
+        // convert a percent into a fraction.
+        let percent_f64 = (1.0 - ledger_view.get_damping_factors().project) * 100.0;
+        Fraction::new(percent_f64.round() as u64, 100u64)
+            * Osrank::new(node_visits as u32, total_walks as u32)
+    }
 }
 
 pub fn rank_network<'a, L, G: 'a>(
@@ -221,12 +233,44 @@ mod tests {
 
     use super::*;
     use crate::protocol_traits::ledger::MockLedger;
+    use crate::types::mock::MockNetwork;
     use crate::types::network::{Artifact, ArtifactType, DependencyType, Network};
     use crate::types::Weight;
-    use num_traits::Zero;
+    use num_traits::{One, Zero};
     use rand_xorshift::XorShiftRng;
 
-    type MockNetwork = Network<f64>;
+    // Test that our osrank algorithm yield a probability distribution,
+    // i.e. the sum of all the ranks equals 1.0 (modulo some rounding error)
+
+    #[quickcheck]
+    fn osrank_is_probability_distribution(mut graph: MockNetwork) {
+        let mock_ledger = MockLedger::default();
+        let get_weight = Box::new(|m: &DependencyType<f64>| *m.get_weight());
+        let set_osrank = Box::new(|node: &Artifact<String>, rank| match node.get_metadata() {
+            ArtifactType::Project { osrank: _ } => ArtifactType::Project { osrank: rank },
+            ArtifactType::Account { osrank: _ } => ArtifactType::Account { osrank: rank },
+        });
+
+        let initial_seed = [0; 16];
+
+        osrank_naive::<MockLedger, MockNetwork, XorShiftRng>(
+            None,
+            &mut graph,
+            &mock_ledger,
+            initial_seed,
+            get_weight,
+            set_osrank,
+        )
+        .unwrap();
+
+        assert_eq!(
+            graph.nodes().fold(Osrank::zero(), |mut acc, node| {
+                acc += node.get_metadata().get_osrank();
+                acc
+            }),
+            Osrank::one()
+        );
+    }
 
     #[test]
     fn everything_ok() {

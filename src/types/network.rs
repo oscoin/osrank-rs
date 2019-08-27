@@ -4,6 +4,7 @@
 extern crate fraction;
 extern crate num_traits;
 extern crate petgraph;
+extern crate quickcheck;
 
 use num_traits::Zero;
 use std::collections::HashMap;
@@ -21,6 +22,7 @@ use petgraph::graph::{node_index, EdgeIndex, NodeIndex};
 use petgraph::visit::EdgeRef;
 use petgraph::Directed;
 
+use crate::util::quickcheck::frequency;
 use quickcheck::{Arbitrary, Gen};
 
 #[derive(Debug, Clone)]
@@ -151,15 +153,32 @@ impl ArtifactType {
             ArtifactType::Account { ref mut osrank } => *osrank = new,
         }
     }
+
+    pub fn get_osrank(&self) -> Osrank {
+        match self {
+            ArtifactType::Project { osrank } => *osrank,
+            ArtifactType::Account { osrank } => *osrank,
+        }
+    }
 }
 
 impl Arbitrary for ArtifactType {
     fn arbitrary<G: Gen>(g: &mut G) -> Self {
-        // TODO: In Haskell's QC we had the `frequency` combinator, which
-        // doesn't seem to exist here (out of the box, at least).
-        ArtifactType::Project {
-            osrank: Osrank::new(g.next_u64(), 1u8),
-        }
+        let choices = vec![
+            (
+                50,
+                ArtifactType::Project {
+                    osrank: Osrank::new(g.next_u64(), 1u8),
+                },
+            ),
+            (
+                50,
+                ArtifactType::Account {
+                    osrank: Osrank::new(g.next_u64(), 1u8),
+                },
+            ),
+        ];
+        frequency(g, choices)
     }
 }
 
@@ -192,6 +211,20 @@ where
             ArtifactType::Project { osrank } => write!(f, "id: {} osrank: {:.5}", self.id, osrank),
             ArtifactType::Account { osrank } => write!(f, "id: {} osrank: {:.5}", self.id, osrank),
         }
+    }
+}
+
+impl<ArtifactId> Arbitrary for Artifact<ArtifactId>
+where
+    ArtifactId: Arbitrary,
+{
+    fn arbitrary<G: Gen>(g: &mut G) -> Self {
+        let id: ArtifactId = Arbitrary::arbitrary(g);
+        let choices = vec![
+            (50, Artifact::new_account(id.clone())),
+            (50, Artifact::new_project(id)),
+        ];
+        frequency(g, choices)
     }
 }
 
@@ -474,6 +507,8 @@ mod tests {
         let subgraph = graph.subgraph_by_nodes(vec![&"bar".to_string()]);
         assert_eq!(subgraph.is_empty(), true);
     }
+
+    // Tests that setting & getting an `Artifact`'s metadata roundtrips.
 
     #[quickcheck]
     fn artifact_get_set_metadata_roundtrip(meta: ArtifactType) {
