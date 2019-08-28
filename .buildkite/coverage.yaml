@@ -1,7 +1,6 @@
 steps:
   - label: 'Code Coverage (experimental)'
     command: |
-        find . -name "*.gcda" -print0 | xargs -0 rm;
         RUSTC_WRAPPER="" RUSTFLAGS="-Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off" cargo cov test --lib;
         zip -0 ccov.zip `find . \( -name "osrank*.gc*" \) -print`;
         grcov ccov.zip -s . -t lcov > lcov0.info;
@@ -9,6 +8,6 @@ steps:
         lcov --remove lcov1.info "*registry*" -o lcov.info;
         bash <(curl -s https://codecov.io/bash) -f lcov.info || echo "Codecov did not collect coverage reports"
     env:
-      DOCKER_IMAGE: "gcr.io/opensourcecoin/osrank-build@sha256:3839633b3f00a9852bd3b4256bf9853e9cea2553ca62f6a602c4d7fa7cd9a404"
+      DOCKER_IMAGE: "gcr.io/opensourcecoin/osrank-build@sha256:00e4c02a7391457031c2f3d3a548e92aa44fd2341de08918968040fe9f2793eb"
     agents:
       docker: "true"

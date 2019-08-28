@@ -9,6 +9,7 @@ RUN apt-get update \
         llvm-dev \
         libclang-dev \
         lcov \
+        curl \
     && apt-get autoremove \
     && rm -rf /var/lib/apt/lists/*
 
