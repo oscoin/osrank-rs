@@ -23,15 +23,9 @@ impl Arbitrary for MockNetwork {
         let mut graph = Network::default();
         let nodes: Vec<Artifact<String>> = Arbitrary::arbitrary(g);
 
-        let sub_nodes = nodes
-            .iter()
-            .cloned()
-            .take(3)
-            .collect::<Vec<Artifact<String>>>();
+        let edges = arbitrary_normalised_edges_from(g, &nodes);
 
-        let edges = arbitrary_normalised_edges_from(g, &sub_nodes.as_slice());
-
-        for n in &sub_nodes {
+        for n in &nodes {
             graph.add_node(n.id().clone(), n.get_metadata().clone())
         }
 
@@ -75,7 +69,7 @@ fn arbitrary_normalised_edges_from<'a, G: Gen + Rng>(
                 // Pick a set of random nodes (it can include this node as
                 // well) and generate a bunch of edges between them.
 
-                let edges_num = g.gen_range(1, 2); // Up to 5 outgoing edges
+                let edges_num = g.gen_range(1, 6); // Up to 5 outgoing edges
                 let node_ixs = (0..edges_num)
                     .map(|_| g.gen_range(0, nodes.len()))
                     .collect::<Vec<usize>>();
