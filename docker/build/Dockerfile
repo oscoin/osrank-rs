@@ -8,8 +8,9 @@ RUN apt-get update \
         zip \
         llvm-dev \
         libclang-dev \
-        lcov \
         curl \
+        cmake \
+        zlib1g-dev \
     && apt-get autoremove \
     && rm -rf /var/lib/apt/lists/*
 
@@ -19,8 +20,7 @@ RUN apt-get update \
 RUN cargo install sccache \
     && rm -rf /usr/local/cargo/registry \
     && rm /usr/local/cargo/.package-cache \
-    && cargo install grcov \
-    && cargo install cargo-cov
+    && cargo install cargo-tarpaulin
 
 # Setup defaults for caching
 VOLUME /cache
