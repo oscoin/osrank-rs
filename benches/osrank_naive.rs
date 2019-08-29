@@ -5,7 +5,8 @@ extern crate rand;
 extern crate rand_xorshift;
 
 use crate::rand::SeedableRng;
-use criterion::{criterion_group, criterion_main, Benchmark, Criterion};
+// use criterion::{criterion_group, criterion_main, benchmark_group, Benchmark, Criterion};
+use criterion::*;
 use itertools::Itertools;
 use num_traits::Zero;
 use oscoin_graph_api::{GraphObject, GraphWriter};
@@ -138,17 +139,32 @@ fn bench_osrank_naive_on_small_network(c: &mut Criterion) {
     });
 }
 
-// run with a lower sample size to speed things up
-fn bench_osrank_naive_on_sample_csv(c: &mut Criterion) {
-    let mut network = construct_network(1_000, 10_000);
-    let info = format!("osrank with {:?} nodes, iter: 1", &network.node_count());
-    c.bench(
-        &info,
-        Benchmark::new("sample size 10", move |b| {
-            b.iter(|| run_osrank_naive(&mut network, 1, [0; 16]))
-        })
-        .sample_size(10),
-    );
+fn bench_osrank_naive(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Increasing node count, iter 1");
+    group.sample_size(10);
+
+    for count in &[1_001, 2_501, 5_001, 7_501, 10_001, 15_001] {
+        let mut network = construct_network(*count as usize, 0);
+        let nodes = &network.node_count();
+        group.bench_function(
+            BenchmarkId::from_parameter(nodes),
+            move |b| {
+                b.iter(|| run_osrank_naive(&mut network, 1, [0; 16]))
+            }
+        );
+    }
+
+    for count in &[5_000, 10_000, 19_370] {
+        let mut network = construct_network(16_220, *count as usize);
+        let nodes = &network.node_count();
+        group.bench_function(
+            BenchmarkId::from_parameter(nodes),
+            move |b| {
+                b.iter(|| run_osrank_naive(&mut network, 1, [0; 16]))
+            }
+        );
+    }
+    group.finish();
 }
 
 fn bench_random_walk_on_csv(c: &mut Criterion) {
@@ -195,9 +211,9 @@ fn bench_rank_network(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    bench_osrank_naive_on_small_network,
-    bench_osrank_naive_on_sample_csv,
-    bench_random_walk_on_csv,
-    bench_rank_network
+    // bench_osrank_naive_on_small_network,
+    bench_osrank_naive
+    // bench_random_walk_on_csv,
+    // bench_rank_network
 );
 criterion_main!(benches);
