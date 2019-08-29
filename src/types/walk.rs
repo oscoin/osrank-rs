@@ -159,6 +159,7 @@ pub struct SeedSet<Id> {
 }
 
 impl<I> SeedSet<I> {
+    /// Creates a new `SeedSet` collection from a vector of identifiers.
     pub fn from(nodes: Vec<I>) -> Self {
         SeedSet {
             trusted_nodes: nodes,
@@ -196,6 +197,23 @@ impl<'a, I> Iterator for SeedSetIter<'a, I> {
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn seed_set_from() {
+        let nodes = vec![1, 2, 3];
+        assert_eq!(SeedSet::from(nodes).is_empty(), false);
+    }
+
+    #[quickcheck]
+    fn seed_set_seedset_iter(nodes: Vec<u32>) {
+        assert_eq!(
+            SeedSet::from(nodes.clone())
+                .seedset_iter()
+                .cloned()
+                .collect::<Vec<u32>>(),
+            nodes
+        );
+    }
 
     #[test]
     fn random_walk_count_visits_non_existent() {

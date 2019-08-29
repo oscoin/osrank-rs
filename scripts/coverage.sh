@@ -1,3 +1,12 @@
+
+# clean up before starting up
+
+rm -f ccov.zip
+cargo cov clean
+rm -f *.gcno
+rm -f *.gdno
+rm -f *.gcda
+
 RUSTFLAGS="-Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off" cargo cov test --all
 zip -0 ccov.zip `find . \( -name "osrank*.gc*" \) -print`;
 grcov ccov.zip -s . -t lcov > lcov0.info
@@ -10,7 +19,3 @@ rm lcov1.info
 
 mkdir -p coverage-report
 genhtml -o coverage-report/ --show-details --highlight --ignore-errors source --legend lcov.info
-
-# clean up
-rm ccov.zip
-cargo cov clean
