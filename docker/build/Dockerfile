@@ -8,17 +8,19 @@ RUN apt-get update \
         zip \
         llvm-dev \
         libclang-dev \
+        lcov \
+        curl \
     && apt-get autoremove \
     && rm -rf /var/lib/apt/lists/*
 
-# Install sccache
+# Install sccache and the rest of the code coverage tools.
+# The second dependency is technically not required but it automate the 
+# generation of .gc* files.
 RUN cargo install sccache \
     && rm -rf /usr/local/cargo/registry \
-    && rm /usr/local/cargo/.package-cache
-
-# Install grcov, for code coverage. The second dependency is technically
-# not required but it automate the generation of .gc* files.
-RUN cargo install grcov && cargo install cargo-cov
+    && rm /usr/local/cargo/.package-cache \
+    && cargo install grcov \
+    && cargo install cargo-cov
 
 # Setup defaults for caching
 VOLUME /cache
