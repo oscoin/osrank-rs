@@ -2,28 +2,13 @@ steps:
   - label: "Tests"
     command: 'cargo test --features build-binary --all'
     env:
-      DOCKER_IMAGE: "gcr.io/opensourcecoin/osrank-build:rustc-1.37.0"
+      DOCKER_IMAGE: "gcr.io/opensourcecoin/osrank-build@sha256:630f3d148d1144e79157bee1685ff3130b6cd620cb77300916c691fcbe29e696"
     agents:
       docker: "true"
 
   - label: "Compile benchmarks (no-run)"
     command: 'cargo bench --no-run'
     env:
-      DOCKER_IMAGE: "gcr.io/opensourcecoin/osrank-build:rustc-1.37.0"
+      DOCKER_IMAGE: "gcr.io/opensourcecoin/osrank-build@sha256:630f3d148d1144e79157bee1685ff3130b6cd620cb77300916c691fcbe29e696"
     agents:
       docker: "true"
-
-  - label: 'Code Coverage (experimental)'
-    command: |
-        RUSTFLAGS="-Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off" cargo cov test --all;
-        zip -0 ccov.zip `find . \( -name "osrank*.gc*" \) -print`;
-        grcov ccov.zip -s . -t lcov > lcov0.info;
-        lcov --remove lcov0.info "*rustc*" -o lcov1.info;
-        lcov --remove lcov1.info "*registry*" -o lcov.info;
-    env:
-      DOCKER_IMAGE: "gcr.io/opensourcecoin/osrank-build:rustc-1.37.0"
-    agents:
-      docker: "true"
-    soft_fail:
-        - exit_status: 1
-        - exit_status: 127
