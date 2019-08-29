@@ -15,3 +15,5 @@ coverage-report
 lcov.info
 *.gcda
 *.gdno
+*.gcno
+ccov.zip

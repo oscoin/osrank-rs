@@ -12,7 +12,7 @@ use crate::types::walk::{RandomWalk, RandomWalks, SeedSet};
 use crate::types::Osrank;
 use core::iter::Iterator;
 use fraction::Fraction;
-use num_traits::Zero;
+use num_traits::{One, Zero};
 use rand::distributions::WeightedError;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -190,8 +190,26 @@ where
 {
     let total_walks = random_walks.len();
     let node_visits = random_walks.count_visits(&node_id);
-    Fraction::from(1.0 - ledger_view.get_damping_factors().project)
-        * Osrank::new(node_visits as u32, total_walks as u32)
+
+    // Avoids division by 0
+    if total_walks == 0 {
+        Osrank::zero()
+    } else {
+        // We don't use Fraction::from(f64), because that generates some
+        // big numbers for the numer & denom, which eventually cause overflow.
+        // What we do instead, is to exploit the fact we have a probability
+        // distribution between 0.0 and 1.0 and we use a simple formula to
+        // convert a percent into a fraction.
+        let percent_f64 = (1.0 - ledger_view.get_damping_factors().project) * 100.0;
+        let rank = Fraction::new(percent_f64.round() as u64, 100u64)
+            * Osrank::new(node_visits as u32, total_walks as u32);
+
+        if rank > Osrank::one() {
+            Osrank::one()
+        } else {
+            rank
+        }
+    }
 }
 
 pub fn rank_network<'a, L, G: 'a>(
@@ -216,17 +234,65 @@ where
 #[cfg(test)]
 mod tests {
 
+    extern crate quickcheck;
     extern crate rand;
     extern crate rand_xorshift;
 
     use super::*;
     use crate::protocol_traits::ledger::MockLedger;
+    use crate::types::mock::MockNetwork;
     use crate::types::network::{Artifact, ArtifactType, DependencyType, Network};
     use crate::types::Weight;
+    use fraction::ToPrimitive;
     use num_traits::Zero;
+    use quickcheck::{quickcheck, TestResult};
     use rand_xorshift::XorShiftRng;
 
-    type MockNetwork = Network<f64>;
+    // Test that our osrank algorithm yield a probability distribution,
+    // i.e. the sum of all the ranks equals 1.0 (modulo some rounding error)
+
+    fn prop_osrank_is_approx_probability_distribution(mut graph: MockNetwork) -> TestResult {
+        if graph.is_empty() {
+            return TestResult::discard();
+        }
+
+        let mock_ledger = MockLedger::default();
+        let get_weight = Box::new(|m: &DependencyType<f64>| *m.get_weight());
+        let set_osrank = Box::new(|node: &Artifact<String>, rank| match node.get_metadata() {
+            ArtifactType::Project { osrank: _ } => ArtifactType::Project { osrank: rank },
+            ArtifactType::Account { osrank: _ } => ArtifactType::Account { osrank: rank },
+        });
+
+        let initial_seed = [0; 16];
+
+        osrank_naive::<MockLedger, MockNetwork, XorShiftRng>(
+            None,
+            &mut graph,
+            &mock_ledger,
+            initial_seed,
+            get_weight,
+            set_osrank,
+        )
+        .unwrap();
+
+        let rank_f64 = graph
+            .nodes()
+            .fold(Osrank::zero(), |mut acc, node| {
+                acc += node.get_metadata().get_osrank();
+                acc
+            })
+            .to_f64()
+            .unwrap();
+
+        // FIXME(adn) This is a fairly weak check, but so far it's the best
+        // we can shoot for.
+        TestResult::from_bool(rank_f64 > 0.0 && rank_f64 < 1.01)
+    }
+
+    #[test]
+    fn osrank_is_approx_probability_distribution() {
+        quickcheck(prop_osrank_is_approx_probability_distribution as fn(MockNetwork) -> TestResult);
+    }
 
     #[test]
     fn everything_ok() {
