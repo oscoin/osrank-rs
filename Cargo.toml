@@ -36,6 +36,11 @@ path = "bin/adjacency_matrix.rs"
 bench = false
 required-features = ["build-binary"]
 
+[[bin]]
+name = "osrank-export-to-gephi"
+path = "bin/export_gephi.rs"
+required-features = ["build-binary"]
+
 [features]
 
 build-binary = ["reqwest", "clap", "failure", "failure_derive"]

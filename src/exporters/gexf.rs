@@ -2,7 +2,6 @@
 #![warn(clippy::all)]
 
 use crate::protocol_traits::graph::{EdgeReference, Graph, GraphObject};
-use crate::types::network::Artifact;
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -96,6 +95,27 @@ where
     }
 }
 
+struct GexfEdge<I, N> {
+    id: I,
+    source: N,
+    target: N,
+}
+
+impl<I, N> IntoGefxXml for GexfEdge<I, N>
+where
+    I: IntoGefxXml,
+    N: IntoGefxXml,
+{
+    fn render(&self) -> String {
+        format!(
+            "<edge id=\"{}\" source=\"{}\" targe=\"{}\"/>",
+            self.id.render(),
+            self.source.render(),
+            self.target.render(),
+        )
+    }
+}
+
 /// Converts a `Graph::Node` into some GEXF tags.
 fn write_node<N>(node: &N, out: &mut File) -> Result<(), ExportError>
 where
@@ -116,7 +136,15 @@ where
 fn write_edge<N, E>(edge: &EdgeReference<N, E>, out: &mut File) -> Result<(), ExportError>
 where
     E: IntoGefxXml + Clone,
+    N: IntoGefxXml + Clone,
 {
+    let gexf_edge = GexfEdge {
+        id: edge.id.clone(),
+        source: edge.source.clone(),
+        target: edge.target.clone(),
+    };
+
+    out.write_all(gexf_edge.render().as_bytes())?;
     Ok(())
 }
 
@@ -129,20 +157,20 @@ where
 {
     let mut all_edges = Vec::new();
 
-    out.write_all("<nodes>".as_bytes())?;
+    out.write_all(b"<nodes>")?;
 
     for n in g.nodes() {
         write_node(n, out)?;
         all_edges.extend(g.neighbours(n.id()))
     }
 
-    out.write_all("</nodes>\\n<edges>".as_bytes())?;
+    out.write_all(b"</nodes>\\n<edges>")?;
 
     for e in &all_edges {
         write_edge(e, out)?;
     }
 
-    out.write_all("</edges>".as_bytes())?;
+    out.write_all(b"</edges>")?;
 
     Ok(())
 }
