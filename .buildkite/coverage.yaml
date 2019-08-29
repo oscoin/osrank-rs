@@ -1,7 +1,7 @@
 steps:
   - label: 'Code Coverage (experimental)'
     command: |
-        RUSTC_WRAPPER= cargo tarpaulin --out Xml;
+        cargo tarpaulin -v --ignore-panics --all --out Json;
         bash <(curl -s https://codecov.io/bash) || echo "Codecov did not collect coverage reports"
     env:
       DOCKER_IMAGE: "gcr.io/opensourcecoin/osrank-build@sha256:ff04b533c757beba57b71f3e5e6e1330818f0de8387dbaa2684fd247db03e39a"
