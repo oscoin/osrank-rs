@@ -1,10 +1,10 @@
 steps:
   - label: 'Code Coverage (experimental)'
     command: |
-        cargo kcov --print-install-kcov-sh | sh;
-        PATH=$HOME/.cargo/bin:$PATH cargo kcov -j2 -v --all -o kcov_coverage_report;
+        cargo kcov -j2 -v --all -o kcov_coverage_report;
+        kcov --merge --exclude-pattern=/cache/cargo --verify kcov_coverage_report;
         bash <(curl -s https://codecov.io/bash) -s kcov_coverage_report
     env:
-      DOCKER_IMAGE: "gcr.io/opensourcecoin/osrank-build@sha256:c36b5d85c221f8d524071ce0586fca31608ab3e01eef2157c37422df8572e80b"
+      DOCKER_IMAGE: "gcr.io/opensourcecoin/osrank-build@sha256:55ee1268f2ccddbcd708842476fcaa60abb18d9abf966bdfae641669649e7fea"
     agents:
       docker: "true"

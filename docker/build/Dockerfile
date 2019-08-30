@@ -1,5 +1,7 @@
 FROM rust:1.37.0-slim-buster
 
+ADD install_kcov.sh /home/install_kcov.sh
+
 # Install additional packages
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -19,21 +21,13 @@ RUN apt-get update \
         make \
         g++ \
         cmake \
-        git \
-        python3 \
+        python-minimal \
+        jq \
     && apt-get autoremove \
     && rm -rf /var/lib/apt/lists/*
 
 # Install kcov like it is the 1987
-RUN git clone https://github.com/SimonKagstrom/kcov.git \
-    && cd kcov \
-    && mkdir build \
-    && cd build \
-    && cmake -DCMAKE_BUILD_TYPE=Release .. \
-    && make -j2 || exit 1 \
-    && make install || exit 1 \
-    && cd ../../ \
-    && rm -rf kcov
+RUN chmod +x /home/install_kcov.sh && ./home/install_kcov.sh
 
 # Install sccache and the rest of the code coverage tools.
 RUN cargo install sccache \
