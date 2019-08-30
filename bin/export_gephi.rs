@@ -1,19 +1,43 @@
 #![allow(unknown_lints)]
 #![warn(clippy::all)]
 
+#[macro_use]
+extern crate log;
+extern crate env_logger;
+
 extern crate clap;
 
 use clap::{App, Arg};
 
 use osrank::exporters::gexf;
-use osrank::importers::csv::import_network;
+use osrank::importers::csv::{import_network, CsvImportError};
 use osrank::protocol_traits::ledger::MockLedger;
 use osrank::types::mock::MockNetwork;
 
 use std::fs::File;
 use std::path::Path;
 
-fn main() -> Result<(), CsvImportError> {
+#[derive(Debug)]
+enum AppError {
+    ImportError(CsvImportError),
+    ExportError(gexf::ExportError),
+}
+
+impl From<CsvImportError> for AppError {
+    fn from(err: CsvImportError) -> AppError {
+        AppError::ImportError(err)
+    }
+}
+
+impl From<gexf::ExportError> for AppError {
+    fn from(err: gexf::ExportError) -> AppError {
+        AppError::ExportError(err)
+    }
+}
+
+fn main() -> Result<(), AppError> {
+    env_logger::init();
+
     let matches = App::new("Export a Graph into a GEFX xml.")
         .arg(
             Arg::with_name("dependencies")
@@ -58,18 +82,27 @@ fn main() -> Result<(), CsvImportError> {
         .value_of("output-path")
         .expect("output csv file not specified.");
 
-    let mut deps_csv_file = File::open(deps).unwrap();
-    let mut deps_meta_csv_file = File::open(deps_meta).unwrap();
-    let mut contribs_csv_file = File::open(contribs).unwrap();
+    let deps_csv_file = File::open(deps).unwrap();
+    let deps_meta_csv_file = File::open(deps_meta).unwrap();
+    let contribs_csv_file = File::open(contribs).unwrap();
 
     let mock_ledger = MockLedger::default();
+
+    debug!("Importing the network...");
+
     let network = import_network::<MockNetwork, MockLedger, File>(
         csv::Reader::from_reader(deps_csv_file),
         csv::Reader::from_reader(deps_meta_csv_file),
         csv::Reader::from_reader(contribs_csv_file),
         None,
         &mock_ledger,
-    );
+    )?;
 
-    gexf::export_graph(&network, &Path::new(out));
+    debug!("Exporting the network...");
+
+    gexf::export_graph(&network, &Path::new(out))?;
+
+    debug!("Done.");
+
+    Ok(())
 }

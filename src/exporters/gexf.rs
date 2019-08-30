@@ -7,17 +7,23 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 
-static GEXF_META: &str = r###"
-<?xml version="1.0" encoding="UTF-8"?>
-<gexf xmlns="http://www.gexf.net/1.2draft" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.gexf.net/1.2draft http://www.gexf.net/1.2draft/gexf.xsd" version="1.2">
-    <meta lastmodifieddate="2009-03-20">
-        <creator>Gephi.org</creator>
-        <description>A Web network</description>
-    </meta>
+static GEXF_META: &str = r###"<?xml version="1.0" encoding="UTF-8"?>
+<gexf xmlns="http://www.gexf.net/1.1draft" version="1.1" xmlns:viz="http://www.gexf.net/1.1draft/viz" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.gexf.net/1.1draft http://www.gexf.net/1.1draft/gexf.xsd">
+  <meta lastmodifieddate="2011-09-05">
+    <creator>Gephi 0.8</creator>
+    <description></description>
+  </meta>
+  <graph defaultedgetype="directed">
+  <attributes class="node" mode="static">
+    <attribute id="modularity_class" title="Modularity Class" type="integer">
+      <default>0</default>
+    </attribute>
+  </attributes>
 "###;
 
 static GEXF_FOOTER: &str = "</gexf>";
 
+#[derive(Debug)]
 pub enum ExportError {
     IOError(std::io::Error),
 }
@@ -40,6 +46,12 @@ struct GexfAttribute<K, V> {
 impl IntoGefxXml for String {
     fn render(&self) -> String {
         self.clone()
+    }
+}
+
+impl IntoGefxXml for usize {
+    fn render(&self) -> String {
+        format!("{}", self)
     }
 }
 
@@ -87,7 +99,11 @@ where
         }
 
         format!(
-            "<node id=\"{}\" label=\"{}\">\\n<attvalues>{}</attvalues>\\n</node>",
+            r###"<node id="{}" label="{}">
+        <viz:size value="10"></viz:size>
+        <viz:color r="168" g="168" b="29"></viz:color>
+        <attvalues>{}</attvalues>
+        </node>"###,
             self.id.render(),
             self.label.render(),
             values
@@ -108,7 +124,7 @@ where
 {
     fn render(&self) -> String {
         format!(
-            "<edge id=\"{}\" source=\"{}\" targe=\"{}\"/>",
+            "<edge id=\"{}\" source=\"{}\" target=\"{}\"/>",
             self.id.render(),
             self.source.render(),
             self.target.render(),
@@ -124,7 +140,7 @@ where
 {
     let gexf_node = GexfNode {
         id: node.id().clone(),
-        label: None,
+        label: Some("test".to_string()),
         attrs: Vec::new(),
     };
 
@@ -157,20 +173,22 @@ where
 {
     let mut all_edges = Vec::new();
 
-    out.write_all(b"<nodes>")?;
+    out.write_all(b"<nodes>\n")?;
 
     for n in g.nodes() {
         write_node(n, out)?;
+        out.write_all(b"\n")?;
         all_edges.extend(g.neighbours(n.id()))
     }
 
-    out.write_all(b"</nodes>\\n<edges>")?;
+    out.write_all(b"</nodes>\n<edges>")?;
 
     for e in &all_edges {
         write_edge(e, out)?;
+        out.write_all(b"\n")?;
     }
 
-    out.write_all(b"</edges>")?;
+    out.write_all(b"</edges>\n</graph>")?;
 
     Ok(())
 }
