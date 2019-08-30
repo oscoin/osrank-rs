@@ -1,13 +1,9 @@
 steps:
   - label: 'Code Coverage (experimental)'
     command: |
-        RUSTC_WRAPPER="" RUSTFLAGS="-Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off" cargo cov test --lib;
-        zip -0 ccov.zip `find . \( -name "osrank*.gc*" \) -print`;
-        grcov ccov.zip -s . -t lcov > lcov0.info;
-        lcov --remove lcov0.info "*rustc*" -o lcov1.info;
-        lcov --remove lcov1.info "*registry*" -o lcov.info;
-        bash <(curl -s https://codecov.io/bash) -f lcov.info || echo "Codecov did not collect coverage reports"
+        cargo kcov -v -j2 --all -o kcov_coverage_report
+        bash <(curl -s https://codecov.io/bash) -s kcov_coverage_report
     env:
-      DOCKER_IMAGE: "gcr.io/opensourcecoin/osrank-build@sha256:00e4c02a7391457031c2f3d3a548e92aa44fd2341de08918968040fe9f2793eb"
+      DOCKER_IMAGE: "gcr.io/opensourcecoin/osrank-build@sha256:c36b5d85c221f8d524071ce0586fca31608ab3e01eef2157c37422df8572e80b"
     agents:
       docker: "true"
