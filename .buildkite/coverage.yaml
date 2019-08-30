@@ -1,7 +1,8 @@
 steps:
   - label: 'Code Coverage (experimental)'
     command: |
-        cargo kcov -j2 -v --all -o kcov_coverage_report;
+        RUSTFLAGS="-C link-dead-code" cargo test --all;
+        cargo kcov -j2 -v --no-clean-rebuild -o kcov_coverage_report;
         kcov --merge --exclude-pattern=/cache/cargo --verify kcov_coverage_report;
         bash <(curl -s https://codecov.io/bash) -s kcov_coverage_report
     env:
