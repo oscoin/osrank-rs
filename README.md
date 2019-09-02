@@ -1,5 +1,6 @@
 
 ![Buildkite](https://badge.buildkite.com/0342a83f273c9ff90762c676def36d4f987f62483d7ae1b333.svg)
+[![codecov](https://codecov.io/gh/oscoin/osrank-rs/branch/master/graph/badge.svg)](https://codecov.io/gh/oscoin/osrank-rs)
 
 For now there is very little to see. This is a work-in-progress, unstable,
 pre-alpha implementation of `osrank` in Rust.
