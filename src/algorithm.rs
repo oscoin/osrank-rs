@@ -2,17 +2,19 @@
 #![warn(clippy::all)]
 
 extern crate ndarray;
+extern crate oscoin_graph_api;
 extern crate petgraph;
 extern crate rand;
 extern crate sprs;
 
-use crate::protocol_traits::graph::{Graph, GraphObject, Id, Metadata};
+use crate::protocol_traits::graph::GraphExtras;
 use crate::protocol_traits::ledger::LedgerView;
 use crate::types::walk::{RandomWalk, RandomWalks, SeedSet};
 use crate::types::Osrank;
 use core::iter::Iterator;
 use fraction::Fraction;
 use num_traits::{One, Zero};
+use oscoin_graph_api::{Data, GraphObject, Id};
 use rand::distributions::WeightedError;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -35,11 +37,11 @@ fn walks<'a, L, G: 'a, RNG>(
     network: &G,
     ledger_view: &L,
     mut rng: RNG,
-    get_weight: &dyn Fn(&<G::Edge as GraphObject>::Metadata) -> f64,
+    get_weight: &dyn Fn(&<G::Edge as GraphObject>::Data) -> f64,
 ) -> RandomWalks<Id<G::Node>>
 where
     L: LedgerView,
-    G: Graph,
+    G: GraphExtras,
     Id<G::Node>: Clone + Eq + Hash,
     RNG: Rng + SeedableRng,
 {
@@ -52,7 +54,7 @@ where
             // TODO distinguish account/project
             // TODO Should there be a safeguard so this doesn't run forever?
             while rng.gen::<f64>() < ledger_view.get_damping_factors().project {
-                let neighbors = network.neighbours(&current_node);
+                let neighbors = network.neighbors(&current_node);
                 match neighbors.choose_weighted(&mut rng, |item| {
                     network
                         .lookup_edge_metadata(&item.id)
@@ -82,11 +84,11 @@ pub fn random_walk<L, G, RNG>(
     network: &G,
     ledger_view: &L,
     rng: RNG,
-    get_weight: &dyn Fn(&<G::Edge as GraphObject>::Metadata) -> f64,
+    get_weight: &dyn Fn(&<G::Edge as GraphObject>::Data) -> f64,
 ) -> Result<WalkResult<G, <G::Node as GraphObject>::Id>, OsrankError>
 where
     L: LedgerView,
-    G: Graph + Clone,
+    G: GraphExtras + Clone,
     Id<G::Node>: Clone + Eq + Hash,
     RNG: Rng + SeedableRng,
 {
@@ -125,12 +127,12 @@ pub fn osrank_naive<L, G, RNG>(
     network: &mut G,
     ledger_view: &L,
     initial_seed: <RNG as SeedableRng>::Seed,
-    get_weight: Box<dyn Fn(&<G::Edge as GraphObject>::Metadata) -> f64>,
-    from_osrank: Box<dyn Fn(&G::Node, Osrank) -> Metadata<G::Node>>,
+    get_weight: Box<dyn Fn(&<G::Edge as GraphObject>::Data) -> f64>,
+    from_osrank: Box<dyn Fn(&G::Node, Osrank) -> Data<G::Node>>,
 ) -> Result<(), OsrankError>
 where
     L: LedgerView,
-    G: Graph + Clone,
+    G: GraphExtras + Clone,
     Id<G::Node>: Clone + Eq + Hash,
     RNG: Rng + SeedableRng,
     <RNG as SeedableRng>::Seed: Clone,
@@ -185,7 +187,7 @@ fn rank_node<L, G>(
 ) -> Osrank
 where
     L: LedgerView,
-    G: Graph,
+    G: GraphExtras,
     <G::Node as GraphObject>::Id: Eq + Clone + Hash,
 {
     let total_walks = random_walks.len();
@@ -216,17 +218,16 @@ pub fn rank_network<'a, L, G: 'a>(
     random_walks: &RandomWalks<Id<G::Node>>,
     network_view: &'a mut G,
     ledger_view: &L,
-    from_osrank: &dyn Fn(&G::Node, Osrank) -> Metadata<G::Node>,
+    from_osrank: &dyn Fn(&G::Node, Osrank) -> Data<G::Node>,
 ) -> Result<(), OsrankError>
 where
     L: LedgerView,
-    G: Graph,
+    G: GraphExtras,
     <G::Node as GraphObject>::Id: Eq + Clone + Hash,
 {
     for node in network_view.nodes_mut() {
         let rank = rank_node::<L, G>(&random_walks, node.id().clone(), ledger_view);
-
-        node.set_metadata(from_osrank(&node, rank))
+        *node.data_mut() = from_osrank(&node, rank)
     }
     Ok(())
 }
@@ -234,6 +235,7 @@ where
 #[cfg(test)]
 mod tests {
 
+    extern crate oscoin_graph_api;
     extern crate quickcheck;
     extern crate rand;
     extern crate rand_xorshift;
@@ -245,6 +247,7 @@ mod tests {
     use crate::types::Weight;
     use fraction::ToPrimitive;
     use num_traits::Zero;
+    use oscoin_graph_api::{Graph, GraphWriter};
     use quickcheck::{quickcheck, TestResult};
     use rand_xorshift::XorShiftRng;
 
@@ -258,7 +261,7 @@ mod tests {
 
         let mock_ledger = MockLedger::default();
         let get_weight = Box::new(|m: &DependencyType<f64>| *m.get_weight());
-        let set_osrank = Box::new(|node: &Artifact<String>, rank| match node.get_metadata() {
+        let set_osrank = Box::new(|node: &Artifact<String>, rank| match node.data() {
             ArtifactType::Project { osrank: _ } => ArtifactType::Project { osrank: rank },
             ArtifactType::Account { osrank: _ } => ArtifactType::Account { osrank: rank },
         });
@@ -278,7 +281,7 @@ mod tests {
         let rank_f64 = graph
             .nodes()
             .fold(Osrank::zero(), |mut acc, node| {
-                acc += node.get_metadata().get_osrank();
+                acc += node.data().get_osrank();
                 acc
             })
             .to_f64()
@@ -333,16 +336,17 @@ mod tests {
         ];
         for edge in &edges {
             network.add_edge(
+                2,
                 &edge.0.to_string(),
                 &edge.1.to_string(),
-                2,
+                edge.2.as_f64().unwrap(),
                 DependencyType::Influence(edge.2.as_f64().unwrap()),
             )
         }
 
         let mock_ledger = MockLedger::default();
         let get_weight = Box::new(|m: &DependencyType<f64>| *m.get_weight());
-        let set_osrank = Box::new(|node: &Artifact<String>, rank| match node.get_metadata() {
+        let set_osrank = Box::new(|node: &Artifact<String>, rank| match node.data() {
             ArtifactType::Project { osrank: _ } => ArtifactType::Project { osrank: rank },
             ArtifactType::Account { osrank: _ } => ArtifactType::Account { osrank: rank },
         });
@@ -369,7 +373,7 @@ mod tests {
         );
         assert_eq!(
             network.nodes().fold(Vec::new(), |mut ranks, node| {
-                // let bla = *node.get_metadata();
+                // let bla = *node.data();
                 ranks.push(format!("{}", *node));
                 ranks
             }),
