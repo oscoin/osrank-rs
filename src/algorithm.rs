@@ -65,8 +65,8 @@ where
                         .unwrap()
                 }) {
                     Ok(next_edge) => {
-                        walk.add_next(next_edge.target.clone());
-                        current_node = next_edge.target;
+                        walk.add_next(next_edge.to.clone());
+                        current_node = next_edge.to;
                     }
                     Err(WeightedError::NoItem) => break,
                     Err(error) => panic!("Problem with the neighbors: {:?}", error),

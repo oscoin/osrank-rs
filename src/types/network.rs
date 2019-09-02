@@ -16,8 +16,8 @@ use std::path::Path;
 use super::Osrank;
 use crate::protocol_traits::graph::GraphExtras;
 use oscoin_graph_api::{
-    Data, Edge, EdgeReference, EdgeReferences, Edges, Graph, GraphDataWriter, GraphObject,
-    GraphWriter, Id, Node, Nodes, NodesMut,
+    Data, Edge, EdgeRefs, Edges, Graph, GraphDataWriter, GraphObject, GraphWriter, Id, Node, Nodes,
+    NodesMut,
 };
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::{node_index, EdgeIndex, NodeIndex};
@@ -324,7 +324,7 @@ where
         &mut self,
         edge_id: Id<Self::Edge>,
         source: &Id<Self::Node>,
-        target: &Id<Self::Node>,
+        to: &Id<Self::Node>,
         _weight: Self::Weight, // in this implementation, this is contained within the metadata
         edge_metadata: Data<Self::Edge>,
     ) {
@@ -333,7 +333,7 @@ where
             .node_ids
             .get(source)
             .iter()
-            .zip(self.node_ids.get(target).iter())
+            .zip(self.node_ids.get(to).iter())
             .next()
         {
             Some((s, t)) => {
@@ -343,7 +343,7 @@ where
             }
             None => panic!(
                 "add_adge: invalid link, source {} or target {} are missing.",
-                source, target
+                source, to
             ),
         }
     }
@@ -383,17 +383,14 @@ where
     type NodeData = ArtifactType;
     type EdgeData = DependencyType<W>;
 
-    fn neighbors(
-        &self,
-        node_id: &Id<Self::Node>,
-    ) -> EdgeReferences<Id<Self::Node>, Id<Self::Edge>> {
+    fn neighbors(&self, node_id: &Id<Self::Node>) -> EdgeRefs<Id<Self::Node>, Id<Self::Edge>> {
         let mut neighbors = Vec::default();
 
         if let Some(nid) = self.node_ids.get(node_id) {
             for eref in self.from_graph.edges(*nid) {
-                neighbors.push(EdgeReference {
-                    source: self.from_graph[eref.source()].id(),
-                    target: self.from_graph[eref.target()].id(),
+                neighbors.push(oscoin_graph_api::EdgeRef {
+                    from: self.from_graph[eref.source()].id(),
+                    to: self.from_graph[eref.target()].id(),
                     id: self.from_graph[eref.id()].id(),
                 })
             }
@@ -502,7 +499,7 @@ where
         // Once we have added all the nodes, we can now add all the edges.
         for graph_node_id in sub_nodes {
             for graph_edge_ref in self.neighbors(graph_node_id) {
-                let graph_edge_target = graph_edge_ref.target.clone();
+                let graph_edge_target = graph_edge_ref.to.clone();
                 let graph_edge_id = graph_edge_ref.id;
                 let petgraph_edge_id = &self.edge_ids[&graph_edge_id];
                 let edge_object = &self.from_graph[*petgraph_edge_id];
