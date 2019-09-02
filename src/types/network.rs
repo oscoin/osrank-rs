@@ -313,7 +313,11 @@ where
     }
 
     fn remove_node(&mut self, node_id: Id<Self::Node>) {
-        panic!("Remove node not yet implemented.")
+        // Removes the node from petgraph as well as from the internal map
+        if let Some(nid) = self.node_ids.get(&node_id) {
+            self.from_graph.remove_node(*nid);
+            self.node_ids.remove(&node_id);
+        }
     }
 
     fn add_edge(
@@ -321,7 +325,7 @@ where
         edge_id: Id<Self::Edge>,
         source: &Id<Self::Node>,
         target: &Id<Self::Node>,
-        weight: Self::Weight,
+        _weight: Self::Weight, // in this implementation, this is contained within the metadata
         edge_metadata: Data<Self::Edge>,
     ) {
         //NOTE(adn) Should we return a `Result` rather than blowing everything up?
@@ -345,7 +349,11 @@ where
     }
 
     fn remove_edge(&mut self, edge_id: Id<Self::Edge>) {
-        panic!("remove_edge not yet implemented")
+        // Removes the edge from petgraph as well as from the internal map
+        if let Some(eid) = self.edge_ids.get(&edge_id) {
+            self.from_graph.remove_edge(*eid);
+            self.edge_ids.remove(&edge_id);
+        }
     }
 
     fn nodes_mut(&mut self) -> NodesMut<Self::Node> {
@@ -411,15 +419,28 @@ where
             range: self
                 .from_graph
                 .raw_nodes()
-                .into_iter()
+                .iter()
                 .map(|n| &n.weight)
                 .collect::<Vec<&Self::Node>>()
                 .into_iter(),
         }
     }
 
-    fn edges(&self, node: Id<Self::Node>) -> Edges<Self::Edge> {
-        panic!("edges not yet implemented.")
+    fn edges(&self, node: &Id<Self::Node>) -> Edges<Self::Edge> {
+        let mb_id = self.node_ids.get(node);
+        match mb_id {
+            None => Edges {
+                range: Vec::new().into_iter(),
+            },
+            Some(nid) => Edges {
+                range: self
+                    .from_graph
+                    .edges(*nid)
+                    .map(|e| e.weight())
+                    .collect::<Vec<&Self::Edge>>()
+                    .into_iter(),
+            },
+        }
     }
 }
 
