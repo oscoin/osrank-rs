@@ -2,7 +2,7 @@ steps:
   - label: 'Code Coverage (experimental)'
     command: |
         RUSTC_WRAPPER="" RUSTFLAGS="-Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off" cargo cov test --lib;
-        zip -0 ccov.zip `find . \( -name "osrank*.gc*" \) -print`;
+        zip -0 ccov.zip *.gc*;
         grcov ccov.zip -s . -t lcov > lcov0.info;
         lcov --remove lcov0.info "*rustc*" -o lcov1.info;
         lcov --remove lcov1.info "*registry*" -o lcov.info;
