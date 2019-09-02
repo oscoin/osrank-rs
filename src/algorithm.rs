@@ -14,11 +14,13 @@ use crate::types::Osrank;
 use core::iter::Iterator;
 use fraction::Fraction;
 use num_traits::{One, Zero};
-use oscoin_graph_api::{Data, GraphObject, Id};
+use oscoin_graph_api::{Data, Edge, Graph, GraphObject, Id};
+use rand::distributions::uniform::SampleUniform;
 use rand::distributions::WeightedError;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 use std::hash::Hash;
+use std::ops::AddAssign;
 
 #[derive(Debug)]
 pub enum OsrankError {}
@@ -37,13 +39,14 @@ fn walks<'a, L, G: 'a, RNG>(
     network: &G,
     ledger_view: &L,
     mut rng: RNG,
-    get_weight: &dyn Fn(&<G::Edge as GraphObject>::Data) -> f64,
 ) -> RandomWalks<Id<G::Node>>
 where
     L: LedgerView,
     G: GraphExtras,
     Id<G::Node>: Clone + Eq + Hash,
     RNG: Rng + SeedableRng,
+    <G as Graph>::Weight:
+        Default + Clone + PartialOrd + for<'x> AddAssign<&'x G::Weight> + SampleUniform,
 {
     let mut walks = RandomWalks::new();
 
@@ -57,8 +60,8 @@ where
                 let neighbors = network.neighbors(&current_node);
                 match neighbors.choose_weighted(&mut rng, |item| {
                     network
-                        .lookup_edge_metadata(&item.id)
-                        .and_then(|m| Some(get_weight(m)))
+                        .get_edge(&item.id)
+                        .and_then(|m| Some(m.weight()))
                         .unwrap()
                 }) {
                     Ok(next_edge) => {
@@ -84,17 +87,18 @@ pub fn random_walk<L, G, RNG>(
     network: &G,
     ledger_view: &L,
     rng: RNG,
-    get_weight: &dyn Fn(&<G::Edge as GraphObject>::Data) -> f64,
 ) -> Result<WalkResult<G, <G::Node as GraphObject>::Id>, OsrankError>
 where
     L: LedgerView,
     G: GraphExtras + Clone,
     Id<G::Node>: Clone + Eq + Hash,
     RNG: Rng + SeedableRng,
+    <G as Graph>::Weight:
+        Default + Clone + PartialOrd + for<'x> AddAssign<&'x G::Weight> + SampleUniform,
 {
     match seed_set {
         Some(seeds) => {
-            let walks = walks(seeds.seedset_iter(), network, ledger_view, rng, get_weight);
+            let walks = walks(seeds.seedset_iter(), network, ledger_view, rng);
             let mut trusted_node_ids: Vec<&Id<G::Node>> = Vec::new();
             for node in network.nodes() {
                 if rank_node::<L, G>(&walks, node.id().clone(), ledger_view) > Osrank::zero() {
@@ -111,7 +115,7 @@ where
             let all_node_ids = network.nodes().map(|n| n.id());
             let res = WalkResult {
                 network_view: whole_network,
-                walks: walks(all_node_ids, network, ledger_view, rng, get_weight),
+                walks: walks(all_node_ids, network, ledger_view, rng),
             };
 
             Ok(res)
@@ -127,7 +131,6 @@ pub fn osrank_naive<L, G, RNG>(
     network: &mut G,
     ledger_view: &L,
     initial_seed: <RNG as SeedableRng>::Seed,
-    get_weight: Box<dyn Fn(&<G::Edge as GraphObject>::Data) -> f64>,
     from_osrank: Box<dyn Fn(&G::Node, Osrank) -> Data<G::Node>>,
 ) -> Result<(), OsrankError>
 where
@@ -136,6 +139,8 @@ where
     Id<G::Node>: Clone + Eq + Hash,
     RNG: Rng + SeedableRng,
     <RNG as SeedableRng>::Seed: Clone,
+    <G as Graph>::Weight:
+        Default + Clone + PartialOrd + for<'x> AddAssign<&'x G::Weight> + SampleUniform,
 {
     //NOTE(adn) The fact we are creating a new RNG every time we call
     // `random_walk` is deliberate and something to think about. We probably
@@ -149,7 +154,6 @@ where
                 &*network,
                 ledger_view,
                 RNG::from_seed(initial_seed.clone()),
-                &get_weight,
             )?;
             // Phase2, compute the osrank only on the NetworkView
             let phase2 = random_walk(
@@ -157,7 +161,6 @@ where
                 &phase1.network_view,
                 ledger_view,
                 RNG::from_seed(initial_seed.clone()),
-                &get_weight,
             )?;
             rank_network(&phase2.walks, &mut *network, ledger_view, &from_osrank)
         }
@@ -168,7 +171,6 @@ where
                 &*network,
                 ledger_view,
                 RNG::from_seed(initial_seed.clone()),
-                &get_weight,
             )?;
             rank_network(
                 &create_walks.walks,
@@ -260,7 +262,6 @@ mod tests {
         }
 
         let mock_ledger = MockLedger::default();
-        let get_weight = Box::new(|m: &DependencyType<f64>| *m.get_weight());
         let set_osrank = Box::new(|node: &Artifact<String>, rank| match node.data() {
             ArtifactType::Project { osrank: _ } => ArtifactType::Project { osrank: rank },
             ArtifactType::Account { osrank: _ } => ArtifactType::Account { osrank: rank },
@@ -273,7 +274,6 @@ mod tests {
             &mut graph,
             &mock_ledger,
             initial_seed,
-            get_weight,
             set_osrank,
         )
         .unwrap();
@@ -345,7 +345,6 @@ mod tests {
         }
 
         let mock_ledger = MockLedger::default();
-        let get_weight = Box::new(|m: &DependencyType<f64>| *m.get_weight());
         let set_osrank = Box::new(|node: &Artifact<String>, rank| match node.data() {
             ArtifactType::Project { osrank: _ } => ArtifactType::Project { osrank: rank },
             ArtifactType::Account { osrank: _ } => ArtifactType::Account { osrank: rank },
@@ -365,7 +364,6 @@ mod tests {
                 &mut network,
                 &mock_ledger,
                 initial_seed,
-                get_weight,
                 set_osrank
             )
             .unwrap(),
