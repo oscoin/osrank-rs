@@ -52,7 +52,7 @@ impl Arbitrary for NewEdgeAction {
 }
 
 /// Attempts to generate a vector of random edges that respect the osrank
-/// invariant, i.e. that the sum of the weight of the ougoing ones from a
+/// invariant, i.e. that the sum of the weight of the outgoing ones from a
 /// certain node is 1.
 fn arbitrary_normalised_edges_from<'a, G: Gen + Rng>(
     g: &mut G,
