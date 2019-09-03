@@ -14,7 +14,7 @@ use std::io::Write;
 use std::path::Path;
 
 use super::Osrank;
-use crate::protocol_traits::graph::GraphExtras;
+use crate::protocol_traits::graph::{GraphExtras, PetgraphEdgeAdaptor, PetgraphNodeAdaptor};
 use oscoin_graph_api::{
     Data, Edge, EdgeRefs, Edges, Graph, GraphDataWriter, GraphObject, GraphWriter, Id, Node, Nodes,
     NodesMut,
@@ -417,7 +417,7 @@ where
                 .from_graph
                 .raw_nodes()
                 .iter()
-                .map(|n| &n.weight)
+                .map(|n| n.petgraph_node_data())
                 .collect::<Vec<&Self::Node>>()
                 .into_iter(),
         }
@@ -433,7 +433,7 @@ where
                 range: self
                     .from_graph
                     .edges(*nid)
-                    .map(|e| e.weight())
+                    .map(|e| e.petgraph_edge_data())
                     .collect::<Vec<&Self::Edge>>()
                     .into_iter(),
             },
@@ -533,7 +533,12 @@ where
     W: Default + fmt::Display + Clone,
 {
     fn print_nodes(&self) {
-        for arti in self.from_graph.raw_nodes().iter().map(|node| &node.weight) {
+        for arti in self
+            .from_graph
+            .raw_nodes()
+            .iter()
+            .map(|node| node.petgraph_node_data())
+        {
             println!("{}", arti);
         }
     }
