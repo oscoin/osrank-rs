@@ -17,7 +17,7 @@ struct ArbitraryEdge<'a> {
     target: &'a String,
     id: usize,
     weight: f64,
-    metadata: DependencyType<f64>,
+    data: DependencyType<f64>,
 }
 
 impl Arbitrary for MockNetwork {
@@ -33,7 +33,7 @@ impl Arbitrary for MockNetwork {
         }
 
         for e in edges {
-            graph.add_edge(e.id, e.source, e.target, e.weight, e.metadata)
+            graph.add_edge(e.id, e.source, e.target, e.weight, e.data)
         }
 
         graph
@@ -85,7 +85,7 @@ fn arbitrary_normalised_edges_from<'a, G: Gen + Rng>(
                         source: &node.id(),
                         target: &nodes[ix].id(),
                         weight: w,
-                        metadata: DependencyType::Influence(w),
+                        data: DependencyType::Influence(w),
                     });
 
                     id_counter += 1;
