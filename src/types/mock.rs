@@ -11,6 +11,12 @@ use rand::Rng;
 
 pub type MockNetwork = Network<f64>;
 
+/// Equivalent to `newtype Mock a = Mock a` in Haskell. Useful to define
+/// some trait which operates over mocks implementation only.
+pub struct Mock<A> {
+    pub unmock: A,
+}
+
 #[derive(Debug)]
 struct ArbitraryEdge<'a> {
     source: &'a String,
