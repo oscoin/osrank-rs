@@ -1,5 +1,6 @@
 #![macro_use]
 extern crate criterion;
+extern crate oscoin_graph_api;
 extern crate rand;
 extern crate rand_xorshift;
 
@@ -7,11 +8,12 @@ use crate::rand::SeedableRng;
 use criterion::{criterion_group, criterion_main, Benchmark, Criterion};
 use itertools::Itertools;
 use num_traits::Zero;
+use oscoin_graph_api::{GraphObject, GraphWriter};
 use osrank::algorithm::{osrank_naive, random_walk, rank_network};
 use osrank::importers::csv::import_network;
-use osrank::protocol_traits::graph::{Graph, GraphObject};
+use osrank::protocol_traits::graph::GraphExtras;
 use osrank::protocol_traits::ledger::{LedgerView, MockLedger};
-use osrank::types::network::{Artifact, ArtifactType, Dependency, DependencyType, Network};
+use osrank::types::network::{Artifact, ArtifactType, DependencyType, Network};
 use osrank::types::{Osrank, Weight};
 use rand_xorshift::XorShiftRng;
 use std::fs::File;
@@ -52,9 +54,10 @@ fn construct_network_small() -> Network<f64> {
     ];
     for edge in &edges {
         network.add_edge(
+            2,
             &edge.0.to_string(),
             &edge.1.to_string(),
-            2,
+            edge.2.as_f64().unwrap(),
             DependencyType::Influence(edge.2.as_f64().unwrap()),
         )
     }
@@ -99,8 +102,7 @@ fn construct_network(meta_num: usize, contributions_num: usize) -> Network<f64> 
 fn run_osrank_naive(mut network: &mut Network<f64>, iter: u32, initial_seed: [u8; 16]) {
     let mut mock_ledger = MockLedger::default();
     mock_ledger.set_random_walks_num(iter);
-    let get_weight = Box::new(|m: &DependencyType<f64>| *m.get_weight());
-    let set_osrank = Box::new(|node: &Artifact<String>, rank| match node.get_metadata() {
+    let set_osrank = Box::new(|node: &Artifact<String>, rank| match node.data() {
         ArtifactType::Project { osrank: _ } => ArtifactType::Project { osrank: rank },
         ArtifactType::Account { osrank: _ } => ArtifactType::Account { osrank: rank },
     });
@@ -109,7 +111,6 @@ fn run_osrank_naive(mut network: &mut Network<f64>, iter: u32, initial_seed: [u8
         &mut network,
         &mock_ledger,
         initial_seed,
-        get_weight,
         set_osrank,
     )
     .unwrap();
@@ -118,14 +119,11 @@ fn run_osrank_naive(mut network: &mut Network<f64>, iter: u32, initial_seed: [u8
 fn run_random_walk(network: &Network<f64>, iter: u32, initial_seed: [u8; 16]) {
     let mut mock_ledger = MockLedger::default();
     mock_ledger.set_random_walks_num(iter);
-    let get_weight: Box<dyn Fn(&<Dependency<usize, f64> as GraphObject>::Metadata) -> f64> =
-        Box::new(|m: &DependencyType<f64>| *m.get_weight());
     random_walk::<MockLedger, MockNetwork, XorShiftRng>(
         None,
         &network,
         &mock_ledger,
         XorShiftRng::from_seed(initial_seed.clone()),
-        &get_weight,
     )
     .unwrap();
 }
@@ -168,10 +166,8 @@ fn bench_rank_network(c: &mut Criterion) {
     let mut network = construct_network(1_000, 10_000);
     let mut mock_ledger = MockLedger::default();
     mock_ledger.set_random_walks_num(1);
-    let get_weight: Box<dyn Fn(&<Dependency<usize, f64> as GraphObject>::Metadata) -> f64> =
-        Box::new(|m: &DependencyType<f64>| *m.get_weight());
     let set_osrank: Box<dyn Fn(&Artifact<String>, Osrank) -> ArtifactType> =
-        Box::new(|node: &Artifact<String>, rank| match node.get_metadata() {
+        Box::new(|node: &Artifact<String>, rank| match node.data() {
             ArtifactType::Project { osrank: _ } => ArtifactType::Project { osrank: rank },
             ArtifactType::Account { osrank: _ } => ArtifactType::Account { osrank: rank },
         });
@@ -180,7 +176,6 @@ fn bench_rank_network(c: &mut Criterion) {
         &network,
         &mock_ledger,
         XorShiftRng::from_seed([0; 16]),
-        &get_weight,
     )
     .unwrap()
     .walks;

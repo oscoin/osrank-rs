@@ -1,9 +1,11 @@
 #![allow(unknown_lints)]
 #![warn(clippy::all)]
 
-use crate::protocol_traits::graph::{Graph, GraphObject};
+extern crate oscoin_graph_api;
+
 use crate::types::network::{Artifact, DependencyType, Network};
 use crate::util::quickcheck::frequency;
+use oscoin_graph_api::{GraphObject, GraphWriter};
 use quickcheck::{Arbitrary, Gen};
 use rand::Rng;
 
@@ -14,6 +16,7 @@ struct ArbitraryEdge<'a> {
     source: &'a String,
     target: &'a String,
     id: usize,
+    weight: f64,
     metadata: DependencyType<f64>,
 }
 
@@ -26,11 +29,11 @@ impl Arbitrary for MockNetwork {
         let edges = arbitrary_normalised_edges_from(g, &nodes);
 
         for n in &nodes {
-            graph.add_node(n.id().clone(), n.get_metadata().clone())
+            graph.add_node(n.id().clone(), n.data().clone())
         }
 
         for e in edges {
-            graph.add_edge(e.source, e.target, e.id, e.metadata)
+            graph.add_edge(e.id, e.source, e.target, e.weight, e.metadata)
         }
 
         graph
@@ -75,11 +78,14 @@ fn arbitrary_normalised_edges_from<'a, G: Gen + Rng>(
                     .collect::<Vec<usize>>();
 
                 for ix in node_ixs {
+                    let w = 1.0 / f64::from(edges_num);
+
                     edges.push(ArbitraryEdge {
-                        source: node.id(),
-                        target: nodes[ix].id(),
                         id: id_counter,
-                        metadata: DependencyType::Influence(1.0 / f64::from(edges_num)),
+                        source: &node.id(),
+                        target: &nodes[ix].id(),
+                        weight: w,
+                        metadata: DependencyType::Influence(w),
                     });
 
                     id_counter += 1;

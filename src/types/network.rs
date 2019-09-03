@@ -14,8 +14,10 @@ use std::io::Write;
 use std::path::Path;
 
 use super::Osrank;
-use crate::protocol_traits::graph::{
-    EdgeReference, EdgeReferences, Graph, GraphObject, Id, Metadata, Nodes, NodesMut,
+use crate::protocol_traits::graph::GraphExtras;
+use oscoin_graph_api::{
+    Data, Edge, EdgeRefs, Edges, Graph, GraphDataWriter, GraphObject, GraphWriter, Id, Node, Nodes,
+    NodesMut,
 };
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::{node_index, EdgeIndex, NodeIndex};
@@ -96,18 +98,28 @@ where
     W: Clone,
 {
     type Id = DependencyId;
-    type Metadata = DependencyType<W>;
+    type Data = DependencyType<W>;
 
     fn id(&self) -> &Self::Id {
         &self.id
     }
 
-    fn get_metadata(&self) -> &Self::Metadata {
+    fn data(&self) -> &Self::Data {
         &self.dependency_type
     }
 
-    fn set_metadata(&mut self, v: Self::Metadata) {
-        self.dependency_type = v;
+    fn data_mut(&mut self) -> &mut Self::Data {
+        &mut self.dependency_type
+    }
+}
+
+impl<DependencyId, W> Edge<W, DependencyType<W>> for Dependency<DependencyId, W>
+where
+    DependencyId: Clone,
+    W: Clone,
+{
+    fn weight(&self) -> W {
+        self.dependency_type.get_weight().clone()
     }
 }
 
@@ -187,20 +199,22 @@ where
     ArtifactId: Clone,
 {
     type Id = ArtifactId;
-    type Metadata = ArtifactType;
+    type Data = ArtifactType;
 
     fn id(&self) -> &Self::Id {
         &self.id
     }
 
-    fn get_metadata(&self) -> &Self::Metadata {
+    fn data(&self) -> &Self::Data {
         &self.artifact_type
     }
 
-    fn set_metadata(&mut self, v: Self::Metadata) {
-        self.artifact_type = v
+    fn data_mut(&mut self) -> &mut Self::Data {
+        &mut self.artifact_type
     }
 }
+
+impl<ArtifactId> Node<ArtifactType> for Artifact<ArtifactId> where ArtifactId: Clone {}
 
 impl<Id> fmt::Display for Artifact<Id>
 where
@@ -290,30 +304,36 @@ where
     }
 }
 
-impl<W> Graph for Network<W>
+impl<W> GraphWriter for Network<W>
 where
     W: Default + fmt::Display + Clone,
 {
-    type Node = Artifact<String>;
-    type Edge = Dependency<usize, W>;
-
-    fn add_node(&mut self, node_id: Id<Self::Node>, node_metadata: Metadata<Self::Node>) {
+    fn add_node(&mut self, node_id: Id<Self::Node>, node_metadata: Data<Self::Node>) {
         self.add_artifact(node_id, node_metadata);
+    }
+
+    fn remove_node(&mut self, node_id: Id<Self::Node>) {
+        // Removes the node from petgraph as well as from the internal map
+        if let Some(nid) = self.node_ids.get(&node_id) {
+            self.from_graph.remove_node(*nid);
+            self.node_ids.remove(&node_id);
+        }
     }
 
     fn add_edge(
         &mut self,
-        source: &Id<Self::Node>,
-        target: &Id<Self::Node>,
         edge_id: Id<Self::Edge>,
-        edge_metadata: Metadata<Self::Edge>,
+        source: &Id<Self::Node>,
+        to: &Id<Self::Node>,
+        _weight: Self::Weight, // in this implementation, this is contained within the metadata
+        edge_metadata: Data<Self::Edge>,
     ) {
         //NOTE(adn) Should we return a `Result` rather than blowing everything up?
         match self
             .node_ids
             .get(source)
             .iter()
-            .zip(self.node_ids.get(target).iter())
+            .zip(self.node_ids.get(to).iter())
             .next()
         {
             Some((s, t)) => {
@@ -323,34 +343,16 @@ where
             }
             None => panic!(
                 "add_adge: invalid link, source {} or target {} are missing.",
-                source, target
+                source, to
             ),
         }
     }
 
-    fn neighbours(
-        &self,
-        node_id: &Id<Self::Node>,
-    ) -> EdgeReferences<Id<Self::Node>, Id<Self::Edge>> {
-        let mut neighbours = Vec::default();
-
-        if let Some(nid) = self.node_ids.get(node_id) {
-            for eref in self.from_graph.edges(*nid) {
-                neighbours.push(EdgeReference {
-                    source: self.from_graph[eref.source()].id(),
-                    target: self.from_graph[eref.target()].id(),
-                    id: self.from_graph[eref.id()].id(),
-                })
-            }
-        }
-
-        neighbours
-    }
-
-    fn nodes(&self) -> Nodes<Self::Node> {
-        Nodes {
-            range: 0..self.from_graph.node_count(),
-            to_node_id: Box::new(move |i| &self.from_graph[node_index(i)]),
+    fn remove_edge(&mut self, edge_id: Id<Self::Edge>) {
+        // Removes the edge from petgraph as well as from the internal map
+        if let Some(eid) = self.edge_ids.get(&edge_id) {
+            self.from_graph.remove_edge(*eid);
+            self.edge_ids.remove(&edge_id);
         }
     }
 
@@ -369,7 +371,101 @@ where
             },
         }
     }
+}
 
+impl<W> Graph for Network<W>
+where
+    W: Default + fmt::Display + Clone,
+{
+    type Node = Artifact<String>;
+    type Edge = Dependency<usize, W>;
+    type Weight = W;
+    type NodeData = ArtifactType;
+    type EdgeData = DependencyType<W>;
+
+    fn neighbors(&self, node_id: &Id<Self::Node>) -> EdgeRefs<Id<Self::Node>, Id<Self::Edge>> {
+        let mut neighbors = Vec::default();
+
+        if let Some(nid) = self.node_ids.get(node_id) {
+            for eref in self.from_graph.edges(*nid) {
+                neighbors.push(oscoin_graph_api::EdgeRef {
+                    from: self.from_graph[eref.source()].id(),
+                    to: self.from_graph[eref.target()].id(),
+                    id: self.from_graph[eref.id()].id(),
+                })
+            }
+        }
+
+        neighbors
+    }
+
+    fn get_node(&self, id: &Id<Self::Node>) -> Option<&Self::Node> {
+        self.node_ids
+            .get(id)
+            .and_then(|nid| Some(&self.from_graph[*nid]))
+    }
+
+    fn get_edge(&self, id: &Id<Self::Edge>) -> Option<&Self::Edge> {
+        self.edge_ids
+            .get(id)
+            .and_then(|eid| Some(&self.from_graph[*eid]))
+    }
+
+    fn nodes(&self) -> Nodes<Self::Node> {
+        Nodes {
+            range: self
+                .from_graph
+                .raw_nodes()
+                .iter()
+                .map(|n| &n.weight)
+                .collect::<Vec<&Self::Node>>()
+                .into_iter(),
+        }
+    }
+
+    fn edges(&self, node: &Id<Self::Node>) -> Edges<Self::Edge> {
+        let mb_id = self.node_ids.get(node);
+        match mb_id {
+            None => Edges {
+                range: Vec::new().into_iter(),
+            },
+            Some(nid) => Edges {
+                range: self
+                    .from_graph
+                    .edges(*nid)
+                    .map(|e| e.weight())
+                    .collect::<Vec<&Self::Edge>>()
+                    .into_iter(),
+            },
+        }
+    }
+}
+
+impl<W> GraphDataWriter for Network<W>
+where
+    W: Default + fmt::Display + Clone,
+{
+    fn edge_data_mut(&mut self, id: &Id<Self::Edge>) -> Option<&mut Data<Self::Edge>> {
+        let mb_id = self.edge_ids.get(id);
+        match mb_id {
+            None => None,
+            Some(eid) => Some(self.from_graph[*eid].data_mut()),
+        }
+    }
+
+    fn node_data_mut(&mut self, id: &Id<Self::Node>) -> Option<&mut Data<Self::Node>> {
+        let mb_id = self.node_ids.get(id);
+        match mb_id {
+            None => None,
+            Some(nid) => Some(self.from_graph[*nid].data_mut()),
+        }
+    }
+}
+
+impl<W> GraphExtras for Network<W>
+where
+    W: Default + fmt::Display + Clone,
+{
     fn edge_count(&self) -> usize {
         self.from_graph.edge_count()
     }
@@ -378,27 +474,15 @@ where
         self.from_graph.node_count()
     }
 
-    fn lookup_node_metadata(&self, node_id: &Id<Self::Node>) -> Option<&Metadata<Self::Node>> {
+    fn lookup_node_metadata(&self, node_id: &Id<Self::Node>) -> Option<&Data<Self::Node>> {
         self.node_ids
             .get(node_id)
-            .and_then(|n| Some(self.from_graph[*n].get_metadata()))
+            .and_then(|n| Some(self.from_graph[*n].data()))
     }
-    fn lookup_edge_metadata(&self, edge_id: &Id<Self::Edge>) -> Option<&Metadata<Self::Edge>> {
+    fn lookup_edge_metadata(&self, edge_id: &Id<Self::Edge>) -> Option<&Data<Self::Edge>> {
         self.edge_ids
             .get(edge_id)
-            .and_then(|e| Some(self.from_graph[*e].get_metadata()))
-    }
-
-    fn set_node_metadata(&mut self, node_id: &Id<Self::Node>, new: Metadata<Self::Node>) {
-        if let Some(nid) = self.node_ids.get(node_id) {
-            self.from_graph[*nid].set_metadata(new)
-        }
-    }
-
-    fn set_edge_metadata(&mut self, edge_id: &Id<Self::Edge>, new: Metadata<Self::Edge>) {
-        if let Some(eid) = self.edge_ids.get(edge_id) {
-            self.from_graph[*eid].set_metadata(new)
-        }
+            .and_then(|e| Some(self.from_graph[*e].data()))
     }
 
     fn subgraph_by_nodes(&self, sub_nodes: Vec<&String>) -> Self {
@@ -408,14 +492,14 @@ where
             // Add the node only if `graph_node_id` exists.
             if let Some(petgraph_node_id) = &self.node_ids.get(*graph_node_id) {
                 let node = &self.from_graph[**petgraph_node_id].clone();
-                sub_network.add_node(node.id().to_string(), node.get_metadata().clone());
+                sub_network.add_node(node.id().to_string(), node.data().clone());
             }
         }
 
         // Once we have added all the nodes, we can now add all the edges.
         for graph_node_id in sub_nodes {
-            for graph_edge_ref in self.neighbours(graph_node_id) {
-                let graph_edge_target = graph_edge_ref.target.clone();
+            for graph_edge_ref in self.neighbors(graph_node_id) {
+                let graph_edge_target = graph_edge_ref.to.clone();
                 let graph_edge_id = graph_edge_ref.id;
                 let petgraph_edge_id = &self.edge_ids[&graph_edge_id];
                 let edge_object = &self.from_graph[*petgraph_edge_id];
@@ -424,10 +508,11 @@ where
                 // exist, we have to explictly check.
                 if sub_network.node_ids.get(&graph_edge_target).is_some() {
                     sub_network.add_edge(
+                        graph_edge_id.clone(),
                         graph_node_id,
                         &graph_edge_target,
-                        *graph_edge_id,
-                        edge_object.get_metadata().clone(),
+                        edge_object.weight().clone(),
+                        edge_object.data().clone(),
                     );
                 }
             }
@@ -465,7 +550,7 @@ mod tests {
 
         for node in &["p1", "p2", "p3"] {
             let a = Artifact::new_project(node.to_string());
-            network.add_node(a.id().clone(), a.get_metadata().clone());
+            network.add_node(a.id().clone(), a.data().clone());
         }
 
         let edges = [
@@ -477,9 +562,10 @@ mod tests {
 
         for edge in &edges {
             network.add_edge(
+                2,
                 &edge.0.to_string(),
                 &edge.1.to_string(),
-                2,
+                edge.2.as_f64().unwrap(),
                 DependencyType::Influence(edge.2.as_f64().unwrap()),
             )
         }
@@ -513,8 +599,8 @@ mod tests {
     #[quickcheck]
     fn artifact_get_set_metadata_roundtrip(meta: ArtifactType) {
         let mut a = Artifact::new_account("foo");
-        a.set_metadata(meta.clone());
-        assert_eq!(*a.get_metadata(), meta);
+        *a.data_mut() = meta.clone();
+        assert_eq!(*a.data(), meta);
     }
 
 }
