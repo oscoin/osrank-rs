@@ -3,16 +3,17 @@
 
 extern crate csv;
 extern crate num_traits;
+extern crate oscoin_graph_api;
 extern crate serde;
 extern crate sprs;
 
 use crate::adjacency::new_network_matrix;
 use crate::linalg::SparseMatrix;
-use crate::protocol_traits::graph::Graph;
 use crate::protocol_traits::ledger::LedgerView;
 use crate::types::network::{Artifact, ArtifactType, Dependency, DependencyType};
 use core::fmt;
 use num_traits::{Num, One, Zero};
+use oscoin_graph_api::{Graph, GraphWriter};
 use serde::Deserialize;
 use sprs::{CsMat, TriMat, TriMatBase};
 use std::collections::{HashMap, HashSet};
@@ -218,7 +219,13 @@ pub fn import_network<G, L, R>(
 where
     L: LedgerView,
     R: Read,
-    G: Graph<Node = Artifact<String>, Edge = Dependency<usize, f64>>,
+    G: Graph<
+            Node = Artifact<String>,
+            Edge = Dependency<usize, f64>,
+            Weight = f64,
+            NodeData = ArtifactType,
+            EdgeData = DependencyType<f64>,
+        > + GraphWriter,
 {
     let mut deps_meta = DependenciesMetadata::new();
     let mut contribs_meta = ContributionsMetadata::new();
@@ -299,9 +306,10 @@ where
     for (source, row_vec) in network_matrix.outer_iterator().enumerate() {
         for (target, weight) in row_vec.iter().enumerate() {
             graph.add_edge(
+                current_edge_id,
                 &index2id.get(&source).unwrap(),
                 &index2id.get(&target).unwrap(),
-                current_edge_id,
+                *weight.1,
                 DependencyType::Influence(*weight.1),
             );
             current_edge_id += 1;
@@ -376,7 +384,7 @@ mod tests {
     extern crate num_traits;
     extern crate tempfile;
 
-    use crate::protocol_traits::graph::Graph;
+    use crate::protocol_traits::graph::GraphExtras;
     use crate::protocol_traits::ledger::MockLedger;
     use crate::types::network::{ArtifactType, DependencyType, Network};
     use num_traits::Zero;

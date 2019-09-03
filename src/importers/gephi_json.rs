@@ -1,11 +1,12 @@
 extern crate num_traits;
+extern crate oscoin_graph_api;
 extern crate serde;
 extern crate serde_json;
 
-use crate::protocol_traits::graph::Graph;
 use crate::types::network::{ArtifactType, DependencyType, Network};
 use crate::types::Weight;
 use num_traits::Zero;
+use oscoin_graph_api::GraphWriter;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -37,7 +38,13 @@ pub fn from_gephi_json(nodes: Vec<GephiNode>, edges: Vec<GephiEdge>) -> Network<
         //FIXME(adn) This should take into account normalisation and
         //redistribution of the weights etc.
         let depends_on = DependencyType::Depend(Weight::new(1, 1));
-        network.add_edge(&edge.s.to_string(), &edge.t.to_string(), ix, depends_on)
+        network.add_edge(
+            ix,
+            &edge.s.to_string(),
+            &edge.t.to_string(),
+            Weight::new(1, 1),
+            depends_on,
+        )
     }
 
     network
