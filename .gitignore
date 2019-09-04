@@ -17,3 +17,5 @@ lcov.info
 *.gdno
 *.gcno
 ccov.zip
+
+.DS_Store

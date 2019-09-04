@@ -5,7 +5,7 @@ extern crate rand;
 extern crate rand_xorshift;
 
 use crate::rand::SeedableRng;
-use criterion::{criterion_group, criterion_main, Benchmark, Criterion};
+use criterion::*;
 use itertools::Itertools;
 use num_traits::Zero;
 use oscoin_graph_api::{GraphObject, GraphWriter};
@@ -128,9 +128,11 @@ fn run_random_walk(network: &Network<f64>, iter: u32, initial_seed: [u8; 16]) {
     .unwrap();
 }
 
+// Benchmarks intended to be run for development are appended with `(dev) `.
+// `cargo bench -- dev` will only run them.
 fn bench_osrank_naive_on_small_network(c: &mut Criterion) {
     let mut network = construct_network_small();
-    c.bench_function("osrank by random seed", move |b| {
+    c.bench_function("(dev) osrank by random seed", move |b| {
         b.iter(|| {
             let rand_vec: [u8; 16] = rand::random();
             run_osrank_naive(&mut network, 1, rand_vec)
@@ -141,7 +143,7 @@ fn bench_osrank_naive_on_small_network(c: &mut Criterion) {
 // run with a lower sample size to speed things up
 fn bench_osrank_naive_on_sample_csv(c: &mut Criterion) {
     let mut network = construct_network(1_000, 10_000);
-    let info = format!("osrank with {:?} nodes, iter: 1", &network.node_count());
+    let info = format!("(dev) osrank with {:?} nodes, iter: 1", &network.node_count());
     c.bench(
         &info,
         Benchmark::new("sample size 10", move |b| {
@@ -154,7 +156,7 @@ fn bench_osrank_naive_on_sample_csv(c: &mut Criterion) {
 fn bench_random_walk_on_csv(c: &mut Criterion) {
     let network = construct_network(1_000, 10_000);
     let info = format!(
-        "random walks with {:?} nodes, iter: 1",
+        "(dev) random walks with {:?} nodes, iter: 1",
         &network.node_count()
     );
     c.bench_function(&info, move |b| {
@@ -180,7 +182,7 @@ fn bench_rank_network(c: &mut Criterion) {
     .unwrap()
     .walks;
     let info = format!(
-        "bench network of {:?} nodes with {:?} walks",
+        "(dev) bench network of {:?} nodes with {:?} walks",
         &network.node_count(),
         &walks.len()
     );
@@ -193,11 +195,64 @@ fn bench_rank_network(c: &mut Criterion) {
     );
 }
 
+// The following benchmarks are very slow and intended to be run on a nighlty CI. For local testing
+// run the benchmarks with `cargo bench -- dev` to avoid them
+fn bench_nightly_osrank_naive(c: &mut Criterion) {
+    let mut group = c.benchmark_group("(nightly) Increasing node count");
+    group.sample_size(10);
+
+    for iter in &[1, 10, 100, 1_000] {
+        for count in &[1_001, 2_501, 5_001, 7_501, 10_001, 15_001] {
+            let mut network = construct_network(*count as usize, 0);
+            let nodes = &network.node_count();
+            group.bench_function(
+                BenchmarkId::new(format!("Iter {}", &iter), nodes),
+                move |b| {
+                    b.iter(|| run_osrank_naive(&mut network, *iter as u32, [0; 16]))
+                }
+            );
+        }
+
+        for count in &[5_000, 10_000, 19_370] {
+            let mut network = construct_network(16_220, *count as usize);
+            let nodes = &network.node_count();
+            group.bench_function(
+                BenchmarkId::new(format!("Iter {}", &iter), nodes),
+                move |b| {
+                    b.iter(|| run_osrank_naive(&mut network, *iter as u32, [0; 16]))
+                }
+            );
+        }
+    }
+    group.finish();
+}
+
+fn bench_nightly_random_walk(c: &mut Criterion) {
+    let mut group = c.benchmark_group("(nightly) Random walks with increasing iterator and node count");
+    group.sample_size(10);
+
+    for iter in &[1, 10, 100, 1_000] {
+        for count in &[1_001, 2_501, 5_001, 7_501, 10_001, 15_001] {
+            let network = construct_network(*count as usize, 0);
+            let nodes = &network.node_count();
+            group.bench_function(
+                BenchmarkId::new(format!("Iter {}", &iter), nodes),
+                move |b| {
+                    b.iter(|| run_random_walk(&network, *iter, [0; 16]))
+                }
+            );
+        }
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_osrank_naive_on_small_network,
     bench_osrank_naive_on_sample_csv,
     bench_random_walk_on_csv,
-    bench_rank_network
+    bench_rank_network,
+    bench_nightly_osrank_naive,
+    bench_nightly_random_walk
 );
 criterion_main!(benches);
