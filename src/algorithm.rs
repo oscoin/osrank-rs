@@ -16,7 +16,7 @@ use crate::types::Osrank;
 use core::iter::Iterator;
 use fraction::Fraction;
 use num_traits::{One, Zero};
-use oscoin_graph_api::{Edge, Graph, GraphAlgorithm, GraphObject, Id};
+use oscoin_graph_api::{Direction, Edge, Graph, GraphAlgorithm, GraphObject, Id};
 use rand::distributions::uniform::SampleUniform;
 use rand::distributions::WeightedError;
 use rand::seq::SliceRandom;
@@ -63,7 +63,7 @@ where
             // TODO distinguish account/project
             // TODO Should there be a safeguard so this doesn't run forever?
             while rng.gen::<f64>() < ledger_view.get_damping_factors().project {
-                let neighbors = network.neighbors(&current_node);
+                let neighbors = network.edges_directed(&current_node, Direction::Outgoing);
                 match neighbors.choose_weighted(rng, |item| {
                     network
                         .get_edge(&item.id)
