@@ -7,7 +7,7 @@ extern crate petgraph;
 extern crate quickcheck;
 
 use num_traits::Zero;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -16,8 +16,8 @@ use std::path::Path;
 use super::Osrank;
 use crate::protocol_traits::graph::{GraphExtras, PetgraphEdgeAdaptor, PetgraphNodeAdaptor};
 use oscoin_graph_api::{
-    Data, Edge, EdgeRefs, Edges, Graph, GraphDataWriter, GraphObject, GraphWriter, Id, Node, Nodes,
-    NodesMut,
+    Data, Direction, Edge, EdgeRefs, Edges, Graph, GraphDataWriter, GraphObject, GraphWriter, Id,
+    Node, Nodes, NodesMut,
 };
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::{node_index, EdgeIndex, NodeIndex};
@@ -383,20 +383,30 @@ where
     type NodeData = ArtifactType;
     type EdgeData = DependencyType<W>;
 
-    fn neighbors(&self, node_id: &Id<Self::Node>) -> EdgeRefs<Id<Self::Node>, Id<Self::Edge>> {
-        let mut neighbors = Vec::default();
+    fn neighbors(&self, node_id: &Id<Self::Node>) -> Nodes<Self::Node> {
+        let mut neighbors = Vec::new();
+        let mut unique_node_ids = BTreeSet::new();
 
         if let Some(nid) = self.node_ids.get(node_id) {
             for eref in self.from_graph.edges(*nid) {
-                neighbors.push(oscoin_graph_api::EdgeRef {
-                    from: self.from_graph[eref.source()].id(),
-                    to: self.from_graph[eref.target()].id(),
-                    id: self.from_graph[eref.id()].id(),
-                })
+                if let Some(node_from) = self.from_graph.node_weight(eref.source()) {
+                    if !unique_node_ids.contains(node_from.id()) {
+                        neighbors.push(node_from);
+                        unique_node_ids.insert(node_from.id());
+                    }
+                }
+                if let Some(node_to) = self.from_graph.node_weight(eref.target()) {
+                    if !unique_node_ids.contains(node_to.id()) {
+                        neighbors.push(node_to);
+                        unique_node_ids.insert(node_to.id());
+                    }
+                }
             }
         }
 
-        neighbors
+        Nodes {
+            range: neighbors.into_iter(),
+        }
     }
 
     fn get_node(&self, id: &Id<Self::Node>) -> Option<&Self::Node> {
@@ -438,6 +448,31 @@ where
                     .into_iter(),
             },
         }
+    }
+
+    fn edges_directed(
+        &self,
+        node_id: &Id<Self::Node>,
+        dir: Direction,
+    ) -> EdgeRefs<Id<Self::Node>, Id<Self::Edge>> {
+        let mut neighbors = Vec::default();
+
+        let petgraph_dir = match dir {
+            Direction::Outgoing => petgraph::Direction::Outgoing,
+            Direction::Incoming => petgraph::Direction::Incoming,
+        };
+
+        if let Some(nid) = self.node_ids.get(node_id) {
+            for eref in self.from_graph.edges_directed(*nid, petgraph_dir) {
+                neighbors.push(oscoin_graph_api::EdgeRef {
+                    from: self.from_graph[eref.source()].id(),
+                    to: self.from_graph[eref.target()].id(),
+                    id: self.from_graph[eref.id()].id(),
+                })
+            }
+        }
+
+        neighbors
     }
 }
 
@@ -498,7 +533,7 @@ where
 
         // Once we have added all the nodes, we can now add all the edges.
         for graph_node_id in sub_nodes {
-            for graph_edge_ref in self.neighbors(graph_node_id) {
+            for graph_edge_ref in self.edges_directed(graph_node_id, Direction::Outgoing) {
                 let graph_edge_target = graph_edge_ref.to.clone();
                 let graph_edge_id = graph_edge_ref.id;
                 let petgraph_edge_id = &self.edge_ids[&graph_edge_id];
