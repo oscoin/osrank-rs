@@ -236,9 +236,9 @@ pub struct OsrankNaiveMockContext<'a, G = MockNetwork>
 where
     G: Graph,
 {
-    seed_set: Option<&'a SeedSet<Id<G::Node>>>,
-    ledger_view: MockLedger,
-    from_osrank: &'a (dyn Fn(&mut G::Node, Osrank) -> ()),
+    pub seed_set: Option<&'a SeedSet<Id<G::Node>>>,
+    pub ledger_view: MockLedger,
+    pub from_osrank: &'a (dyn Fn(&mut G::Node, Osrank) -> ()),
 }
 
 impl<'a> Default for OsrankNaiveMockContext<'a, MockNetwork> {
@@ -272,7 +272,7 @@ where
     type Output = ();
     type Context = OsrankNaiveMockContext<'a, G>;
     type Error = OsrankError;
-    type Rng = XorShiftRng;
+    type RngSeed = [u8; 16];
 
     fn execute(
         &self,
