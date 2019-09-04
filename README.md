@@ -2,10 +2,24 @@
 ![Buildkite](https://badge.buildkite.com/0342a83f273c9ff90762c676def36d4f987f62483d7ae1b333.svg)
 [![codecov](https://codecov.io/gh/oscoin/osrank-rs/branch/master/graph/badge.svg)](https://codecov.io/gh/oscoin/osrank-rs)
 
-For now there is very little to see. This is a work-in-progress, unstable,
-pre-alpha implementation of `osrank` in Rust.
+This repo contains a work-in-progress, unstable, pre-alpha implementation 
+of `osrank` in Rust.
 
-# Sourcing the data
+# Getting started
+
+**If you are new to the project, you might want to start by reading the 
+[specification](https://github.com/oscoin/docs/raw/master/osrank/spec/osrank_spec.pdf)**.
+This document contains information about the osrank's basic model, the set of
+open questions remaining to the answered as well as a general discussion
+about a possible API.
+
+# Code organisation
+
+The code is split into a library and a set of binaries, which can be used to
+perform data transformations, import & export graphs and more. We also have
+a set of benchmarks.
+
+# (Binaries only) Sourcing the data
 
 This project provides a bunch of binaries to source the data necessary to
 compute things like an adjacency matrix locally, bypassing the Jupyter notebook.
