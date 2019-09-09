@@ -1,10 +1,7 @@
 steps:
   - label: 'Benchmarks'
     command: |
-        cargo bench -- dev;
-        echo $(ls -lh);
-        echo $(ls -lh target);
-        echo $(ls -lh target/criterion)
+        cargo bench -- --measurement-time 50 --sample-size 10 dev
     env:
       DOCKER_IMAGE: "gcr.io/opensourcecoin/osrank-build@sha256:d9cb3dce4f4af6d9a7db1669617638fbd5719498ecdf8246d99a4e724b65139b"
     agents:
