@@ -1,0 +1,8 @@
+steps:
+  - label: 'Benchmarks'
+    command: |
+        cargo bench -- nightly
+    env:
+      DOCKER_IMAGE: "gcr.io/opensourcecoin/osrank-build@sha256:00e4c02a7391457031c2f3d3a548e92aa44fd2341de08918968040fe9f2793eb"
+    agents:
+      docker: "true"

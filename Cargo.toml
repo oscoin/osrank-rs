@@ -76,5 +76,11 @@ criterion = "0.3.0"
 arrayref = "0.3.5"
 
 [[bench]]
-name = "osrank_naive"
+name = "osrank_naive_development"
+path = "benches/osrank_naive_development.rs"
+harness = false
+
+[[bench]]
+name = "osrank_naive_nightly"
+path = "benches/osrank_naive_nightly.rs"
 harness = false
