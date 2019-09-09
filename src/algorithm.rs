@@ -8,24 +8,34 @@ extern crate rand;
 extern crate sprs;
 
 use crate::protocol_traits::graph::GraphExtras;
-use crate::protocol_traits::ledger::LedgerView;
+use crate::protocol_traits::ledger::{LedgerView, MockLedger};
+use crate::types::mock::{Mock, MockNetwork};
+use crate::types::network::{Artifact, ArtifactType};
 use crate::types::walk::{RandomWalk, RandomWalks, SeedSet};
 use crate::types::Osrank;
 use core::iter::Iterator;
 use fraction::Fraction;
 use num_traits::{One, Zero};
-use oscoin_graph_api::{Data, Edge, Graph, GraphObject, Id};
+use oscoin_graph_api::{Direction, Edge, Graph, GraphAlgorithm, GraphObject, Id};
 use rand::distributions::uniform::SampleUniform;
 use rand::distributions::WeightedError;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
+use rand_xorshift::XorShiftRng;
 use std::hash::Hash;
+use std::marker::PhantomData;
 use std::ops::AddAssign;
 
-#[derive(Debug)]
-pub enum OsrankError {}
+#[derive(Debug, PartialEq, Eq)]
+/// Errors that the `osrank` algorithm might throw.
+pub enum OsrankError {
+    /// Generic, catch-all error for things which can go wrong during the
+    /// algorithm.
+    UnknownError,
+}
 
 #[derive(Debug)]
+/// The output from a random walk.
 pub struct WalkResult<G, I>
 where
     I: Eq + Hash,
@@ -38,7 +48,7 @@ fn walks<'a, L, G: 'a, RNG>(
     starting_nodes: impl Iterator<Item = &'a Id<G::Node>>,
     network: &G,
     ledger_view: &L,
-    mut rng: RNG,
+    rng: &mut RNG,
 ) -> RandomWalks<Id<G::Node>>
 where
     L: LedgerView,
@@ -57,8 +67,8 @@ where
             // TODO distinguish account/project
             // TODO Should there be a safeguard so this doesn't run forever?
             while rng.gen::<f64>() < ledger_view.get_damping_factors().project {
-                let neighbors = network.neighbors(&current_node);
-                match neighbors.choose_weighted(&mut rng, |item| {
+                let neighbors = network.edges_directed(&current_node, Direction::Outgoing);
+                match neighbors.choose_weighted(rng, |item| {
                     network
                         .get_edge(&item.id)
                         .and_then(|m| Some(m.weight()))
@@ -78,15 +88,16 @@ where
     walks
 }
 
-// FIXME(adn) It should be possible to make this code parametric over
-// Dependency<W>, for I have ran into a cryptic error about the SampleBorrow
-// trait not be implemented, and wasn't able to immediately make the code
-// typecheck.
+/// Performs a random walk over the input network `G`.
+///
+/// If a `SeedSet` is provided, this function will produce a collection of
+/// _trusted nodes_ to be used for subsequent walks, otherwise the entire
+/// network is returned.
 pub fn random_walk<L, G, RNG>(
-    seed_set: Option<SeedSet<Id<G::Node>>>,
+    seed_set: Option<&SeedSet<Id<G::Node>>>,
     network: &G,
     ledger_view: &L,
-    rng: RNG,
+    rng: &mut RNG,
 ) -> Result<WalkResult<G, <G::Node as GraphObject>::Id>, OsrankError>
 where
     L: LedgerView,
@@ -123,65 +134,40 @@ where
     }
 }
 
-/// Naive version of the algorithm that given a full Network and a precomputed
-/// set W of random walks, iterates over each edge of the Network and computes
-/// the osrank.
-pub fn osrank_naive<L, G, RNG>(
-    seed_set: Option<SeedSet<Id<G::Node>>>,
+/// Naive version of the `osrank` algorithm
+///
+/// Given a full network `G` and an optional `SeedSet`, iterates over each
+/// edge of the network and computes the `Osrank`.
+pub fn osrank_naive<G>(
+    seed_set: Option<&SeedSet<Id<G::Node>>>,
     network: &mut G,
-    ledger_view: &L,
-    initial_seed: <RNG as SeedableRng>::Seed,
-    from_osrank: Box<dyn Fn(&G::Node, Osrank) -> Data<G::Node>>,
+    ledger_view: &impl LedgerView,
+    rng: &mut (impl Rng + SeedableRng),
+    set_osrank: &dyn Fn(&mut G::Node, Osrank) -> (),
 ) -> Result<(), OsrankError>
 where
-    L: LedgerView,
     G: GraphExtras + Clone,
     Id<G::Node>: Clone + Eq + Hash,
-    RNG: Rng + SeedableRng,
-    <RNG as SeedableRng>::Seed: Clone,
     <G as Graph>::Weight:
         Default + Clone + PartialOrd + for<'x> AddAssign<&'x G::Weight> + SampleUniform,
 {
-    //NOTE(adn) The fact we are creating a new RNG every time we call
-    // `random_walk` is deliberate and something to think about. We probably
-    // want to "restart" the randomness from the initial seed every call to
-    // `random_walk`, which means this function has to consume the RNG.
     match seed_set {
         Some(_) => {
             // Phase1, rank the network and produce a NetworkView.
-            let phase1 = random_walk(
-                seed_set,
-                &*network,
-                ledger_view,
-                RNG::from_seed(initial_seed.clone()),
-            )?;
+            let phase1 = random_walk(seed_set, &*network, ledger_view, rng)?;
             // Phase2, compute the osrank only on the NetworkView
-            let phase2 = random_walk(
-                None,
-                &phase1.network_view,
-                ledger_view,
-                RNG::from_seed(initial_seed.clone()),
-            )?;
-            rank_network(&phase2.walks, &mut *network, ledger_view, &from_osrank)
+            let phase2 = random_walk(None, &phase1.network_view, ledger_view, rng)?;
+            rank_network(&phase2.walks, &mut *network, ledger_view, set_osrank)
         }
         None => {
             // Compute osrank on the full NetworkView
-            let create_walks = random_walk(
-                None,
-                &*network,
-                ledger_view,
-                RNG::from_seed(initial_seed.clone()),
-            )?;
-            rank_network(
-                &create_walks.walks,
-                &mut *network,
-                ledger_view,
-                &from_osrank,
-            )
+            let create_walks = random_walk(None, &*network, ledger_view, rng)?;
+            rank_network(&create_walks.walks, &mut *network, ledger_view, set_osrank)
         }
     }
 }
 
+/// Assigns an `Osrank` to a `Node`.
 fn rank_node<L, G>(
     random_walks: &RandomWalks<Id<G::Node>>,
     node_id: Id<G::Node>,
@@ -216,11 +202,12 @@ where
     }
 }
 
+/// Assigns an `Osrank` to a network `G`.
 pub fn rank_network<'a, L, G: 'a>(
     random_walks: &RandomWalks<Id<G::Node>>,
     network_view: &'a mut G,
     ledger_view: &L,
-    from_osrank: &dyn Fn(&G::Node, Osrank) -> Data<G::Node>,
+    set_osrank: &dyn Fn(&mut G::Node, Osrank) -> (),
 ) -> Result<(), OsrankError>
 where
     L: LedgerView,
@@ -228,10 +215,112 @@ where
     <G::Node as GraphObject>::Id: Eq + Clone + Hash,
 {
     for node in network_view.nodes_mut() {
-        let rank = rank_node::<L, G>(&random_walks, node.id().clone(), ledger_view);
-        *node.data_mut() = from_osrank(&node, rank)
+        set_osrank(
+            node,
+            rank_node::<L, G>(&random_walks, node.id().clone(), ledger_view),
+        );
     }
     Ok(())
+}
+
+/// This is a marker type used to implement a valid instance for `GraphAlgorithm`.
+///
+/// The term "marker" comes from the standard Rust [nomenclature](https://doc.rust-lang.org/std/marker/index.html)
+/// to indicate types that have as main purpose the one of "carrying information"
+/// around. In this case, we do need a `G` and a `L` in scope, as well as a valid
+/// lifetime `'a` to exist in scope when we implement `GraphAlgorithm`, but we
+/// might not necessary have one at hand. This is where the [PhantomData](https://doc.rust-lang.org/std/marker/struct.PhantomData.html)
+/// marker type comes into play. It has a trivial type constructor but it allows
+/// us to carry a "witness" that we have a `G`, `L` and `'a` in scope. For the
+/// astute Haskeller, this is essentially the same as
+///
+/// ```haskell, no_run
+/// newtype PhantomData a = PhantomData
+/// ```
+///
+pub struct OsrankNaiveAlgorithm<'a, G: 'a, L> {
+    graph: PhantomData<G>,
+    ledger: PhantomData<L>,
+    ty: PhantomData<&'a ()>,
+}
+
+impl<'a, G, L> Default for OsrankNaiveAlgorithm<'a, G, L> {
+    fn default() -> Self {
+        OsrankNaiveAlgorithm {
+            graph: PhantomData,
+            ledger: PhantomData,
+            ty: PhantomData,
+        }
+    }
+}
+
+/// The `Context` that the osrank naive _mock_ algorithm will need.
+pub struct OsrankNaiveMockContext<'a, G = MockNetwork>
+where
+    G: Graph,
+{
+    /// The optional `SeetSet` to use.
+    pub seed_set: Option<&'a SeedSet<Id<G::Node>>>,
+    /// The `LedgerView` for this context, i.e. a `MockLedger`.
+    pub ledger_view: MockLedger,
+    /// The `set_osrank` function is a "setter" function that given a
+    /// generic `Node` "knows" what to do with the input `Osrank`. This
+    /// function is necessary to bridge the gap between the algorithm being
+    /// written in a totally generic way and `GraphObject`'s nodes not exposing
+    /// a "set_osrank" function directly. Therefore we need some setter function
+    /// which can interpret the `Osrank` and manipulate correctly the input
+    /// `G::Node`.
+    pub set_osrank: &'a (dyn Fn(&mut G::Node, Osrank) -> ()),
+}
+
+impl<'a> Default for OsrankNaiveMockContext<'a, MockNetwork> {
+    fn default() -> Self {
+        OsrankNaiveMockContext {
+            seed_set: None,
+            ledger_view: MockLedger::default(),
+            set_osrank: &mock_network_set_osrank,
+        }
+    }
+}
+
+fn mock_network_set_osrank(node: &mut Artifact<String>, rank: Osrank) {
+    let new_data = match node.data() {
+        ArtifactType::Project { osrank: _ } => ArtifactType::Project { osrank: rank },
+        ArtifactType::Account { osrank: _ } => ArtifactType::Account { osrank: rank },
+    };
+
+    *node.data_mut() = new_data;
+}
+
+impl<'a, G, L> GraphAlgorithm<G> for Mock<OsrankNaiveAlgorithm<'a, G, L>>
+where
+    G: GraphExtras + Clone,
+    L: LedgerView,
+    Id<G::Node>: Clone + Eq + Hash,
+    <G as Graph>::Weight:
+        Default + Clone + PartialOrd + for<'x> AddAssign<&'x G::Weight> + SampleUniform,
+    OsrankNaiveMockContext<'a, G>: Default,
+{
+    type Output = ();
+    type Context = OsrankNaiveMockContext<'a, G>;
+    type Error = OsrankError;
+    type RngSeed = [u8; 16];
+
+    fn execute(
+        &self,
+        ctx: &mut Self::Context,
+        graph: &mut G,
+        initial_seed: <XorShiftRng as SeedableRng>::Seed,
+    ) -> Result<Self::Output, Self::Error> {
+        let mut rng = <XorShiftRng as SeedableRng>::from_seed(initial_seed);
+        osrank_naive(
+            ctx.seed_set,
+            graph,
+            &ctx.ledger_view,
+            &mut rng,
+            &ctx.set_osrank,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -244,39 +333,29 @@ mod tests {
 
     use super::*;
     use crate::protocol_traits::ledger::MockLedger;
-    use crate::types::mock::MockNetwork;
-    use crate::types::network::{Artifact, ArtifactType, DependencyType, Network};
+    use crate::types::mock::{Mock, MockNetwork};
+    use crate::types::network::{ArtifactType, DependencyType, Network};
     use crate::types::Weight;
     use fraction::ToPrimitive;
     use num_traits::Zero;
-    use oscoin_graph_api::{Graph, GraphWriter};
+    use oscoin_graph_api::{Graph, GraphAlgorithm, GraphWriter};
     use quickcheck::{quickcheck, TestResult};
-    use rand_xorshift::XorShiftRng;
 
     // Test that our osrank algorithm yield a probability distribution,
     // i.e. the sum of all the ranks equals 1.0 (modulo some rounding error)
-
     fn prop_osrank_is_approx_probability_distribution(mut graph: MockNetwork) -> TestResult {
         if graph.is_empty() {
             return TestResult::discard();
         }
 
-        let mock_ledger = MockLedger::default();
-        let set_osrank = Box::new(|node: &Artifact<String>, rank| match node.data() {
-            ArtifactType::Project { osrank: _ } => ArtifactType::Project { osrank: rank },
-            ArtifactType::Account { osrank: _ } => ArtifactType::Account { osrank: rank },
-        });
-
         let initial_seed = [0; 16];
 
-        osrank_naive::<MockLedger, MockNetwork, XorShiftRng>(
-            None,
-            &mut graph,
-            &mock_ledger,
-            initial_seed,
-            set_osrank,
-        )
-        .unwrap();
+        let algo: Mock<OsrankNaiveAlgorithm<MockNetwork, MockLedger>> = Mock {
+            unmock: OsrankNaiveAlgorithm::default(),
+        };
+        let mut ctx = OsrankNaiveMockContext::default();
+
+        assert_eq!(algo.execute(&mut ctx, &mut graph, initial_seed), Ok(()));
 
         let rank_f64 = graph
             .nodes()
@@ -344,44 +423,33 @@ mod tests {
             )
         }
 
-        let mock_ledger = MockLedger::default();
-        let set_osrank = Box::new(|node: &Artifact<String>, rank| match node.data() {
-            ArtifactType::Project { osrank: _ } => ArtifactType::Project { osrank: rank },
-            ArtifactType::Account { osrank: _ } => ArtifactType::Account { osrank: rank },
-        });
-
         assert_eq!(network.edge_count(), 11);
 
-        // This is the insertion point of the Graph API. If we had a GraphAPI
-        // "handle" in scope here, we could extract the seed from some state
-        // and use it in the algorithm. Faking it for now.
-
+        // NOTE(adn) In the "real world" the initial_seed will be provided
+        // by who calls `.execute`, probably the ledger/protocol.
         let initial_seed = [0; 16];
 
-        assert_eq!(
-            osrank_naive::<MockLedger, MockNetwork, XorShiftRng>(
-                Some(seed_set),
-                &mut network,
-                &mock_ledger,
-                initial_seed,
-                set_osrank
-            )
-            .unwrap(),
-            ()
-        );
+        let algo: Mock<OsrankNaiveAlgorithm<MockNetwork, MockLedger>> = Mock {
+            unmock: OsrankNaiveAlgorithm::default(),
+        };
+
+        let mut ctx = OsrankNaiveMockContext::default();
+        ctx.seed_set = Some(&seed_set);
+
+        assert_eq!(algo.execute(&mut ctx, &mut network, initial_seed), Ok(()));
+
         assert_eq!(
             network.nodes().fold(Vec::new(), |mut ranks, node| {
-                // let bla = *node.data();
                 ranks.push(format!("{}", *node));
                 ranks
             }),
             vec![
-                "id: p1 osrank: 0.1425",
-                "id: p2 osrank: 0.2225",
-                "id: p3 osrank: 0.1575",
-                "id: a1 osrank: 0.08",
-                "id: a2 osrank: 0.23",
-                "id: a3 osrank: 0.055",
+                "id: p1 osrank: 0.1075",
+                "id: p2 osrank: 0.2325",
+                "id: p3 osrank: 0.2125",
+                "id: a1 osrank: 0.0575",
+                "id: a2 osrank: 0.2675",
+                "id: a3 osrank: 0.065",
                 "id: isle osrank: 0"
             ]
         );

@@ -7,7 +7,7 @@ extern crate petgraph;
 extern crate quickcheck;
 
 use num_traits::Zero;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -16,8 +16,8 @@ use std::path::Path;
 use super::Osrank;
 use crate::protocol_traits::graph::{GraphExtras, PetgraphEdgeAdaptor, PetgraphNodeAdaptor};
 use oscoin_graph_api::{
-    Data, Edge, EdgeRefs, Edges, Graph, GraphDataWriter, GraphObject, GraphWriter, Id, Node, Nodes,
-    NodesMut,
+    Data, Direction, Edge, EdgeRefs, Edges, Graph, GraphDataWriter, GraphObject, GraphWriter, Id,
+    Node, Nodes, NodesMut,
 };
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::{node_index, EdgeIndex, NodeIndex};
@@ -383,20 +383,43 @@ where
     type NodeData = ArtifactType;
     type EdgeData = DependencyType<W>;
 
-    fn neighbors(&self, node_id: &Id<Self::Node>) -> EdgeRefs<Id<Self::Node>, Id<Self::Edge>> {
-        let mut neighbors = Vec::default();
+    fn neighbors(&self, node_id: &Id<Self::Node>) -> Nodes<Self::Node> {
+        let mut nodes = Vec::new();
+        let mut unique_node_ids = BTreeSet::new();
+
+        unique_node_ids.insert(node_id); // avoids having the input as neighbor.
 
         if let Some(nid) = self.node_ids.get(node_id) {
-            for eref in self.from_graph.edges(*nid) {
-                neighbors.push(oscoin_graph_api::EdgeRef {
-                    from: self.from_graph[eref.source()].id(),
-                    to: self.from_graph[eref.target()].id(),
-                    id: self.from_graph[eref.id()].id(),
-                })
+            for raw_edge in self.from_graph.raw_edges() {
+                if raw_edge.target() == *nid {
+                    match self.from_graph.node_weight(raw_edge.source()) {
+                        None => continue,
+                        Some(node_from) => {
+                            if !unique_node_ids.contains(node_from.id()) {
+                                nodes.push(node_from);
+                                unique_node_ids.insert(node_from.id());
+                            }
+                        }
+                    }
+                }
+
+                if raw_edge.source() == *nid {
+                    match self.from_graph.node_weight(raw_edge.target()) {
+                        None => continue,
+                        Some(node_to) => {
+                            if !unique_node_ids.contains(node_to.id()) {
+                                nodes.push(node_to);
+                                unique_node_ids.insert(node_to.id());
+                            }
+                        }
+                    }
+                }
             }
         }
 
-        neighbors
+        Nodes {
+            range: nodes.into_iter(),
+        }
     }
 
     fn get_node(&self, id: &Id<Self::Node>) -> Option<&Self::Node> {
@@ -438,6 +461,31 @@ where
                     .into_iter(),
             },
         }
+    }
+
+    fn edges_directed(
+        &self,
+        node_id: &Id<Self::Node>,
+        dir: Direction,
+    ) -> EdgeRefs<Id<Self::Node>, Id<Self::Edge>> {
+        let mut neighbors = Vec::default();
+
+        let petgraph_dir = match dir {
+            Direction::Outgoing => petgraph::Direction::Outgoing,
+            Direction::Incoming => petgraph::Direction::Incoming,
+        };
+
+        if let Some(nid) = self.node_ids.get(node_id) {
+            for eref in self.from_graph.edges_directed(*nid, petgraph_dir) {
+                neighbors.push(oscoin_graph_api::EdgeRef {
+                    from: self.from_graph[eref.source()].id(),
+                    to: self.from_graph[eref.target()].id(),
+                    id: self.from_graph[eref.id()].id(),
+                })
+            }
+        }
+
+        neighbors
     }
 }
 
@@ -498,7 +546,7 @@ where
 
         // Once we have added all the nodes, we can now add all the edges.
         for graph_node_id in sub_nodes {
-            for graph_edge_ref in self.neighbors(graph_node_id) {
+            for graph_edge_ref in self.edges_directed(graph_node_id, Direction::Outgoing) {
                 let graph_edge_target = graph_edge_ref.to.clone();
                 let graph_edge_id = graph_edge_ref.id;
                 let petgraph_edge_id = &self.edge_ids[&graph_edge_id];
@@ -576,6 +624,49 @@ mod tests {
         }
 
         network
+    }
+
+    #[test]
+    // We test that `neighbors` returns _all_ the neighbors of a node,
+    // which means nodes derived from _both_ incoming & outgoing edges.
+    fn neighbours_returns_outgoing_and_incoming() {
+        let graph = network_fixture();
+        let all_neighbours = graph
+            .neighbors(&"p1".to_string())
+            .map(|n| n.id())
+            .collect::<Vec<&String>>();
+        assert_eq!(all_neighbours, vec!["p2", "p3"]);
+    }
+
+    #[test]
+    // We test that `edges_directed` returns only the outgoing edges when
+    // the `Outgoing` direction is specified.
+    fn edges_directed_outgoing() {
+        let graph = network_fixture();
+        let all_outgoing = graph
+            .edges_directed(&"p1".to_string(), Direction::Outgoing)
+            .into_iter()
+            .map(|eref| graph.get_node(eref.to).and_then(|n| Some(n.id())))
+            .collect::<Vec<Option<&String>>>();
+
+        // There are two outgoing edges to p2 in the fixture graph.
+        assert_eq!(
+            all_outgoing,
+            vec![Some(&"p2".to_string()), Some(&"p2".to_string())]
+        );
+    }
+
+    #[test]
+    // We test that `edges_directed` returns only the *incoming* edges when
+    // the `Incoming` direction is specified.
+    fn edges_directed_incoming() {
+        let graph = network_fixture();
+        let all_outgoing = graph
+            .edges_directed(&"p1".to_string(), Direction::Incoming)
+            .into_iter()
+            .map(|eref| graph.get_node(eref.from).and_then(|n| Some(n.id())))
+            .collect::<Vec<Option<&String>>>();
+        assert_eq!(all_outgoing, vec![Some(&"p3".to_string())]);
     }
 
     #[test]

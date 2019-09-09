@@ -8,20 +8,32 @@ use crate::rand::SeedableRng;
 use criterion::*;
 use itertools::Itertools;
 use num_traits::Zero;
-use oscoin_graph_api::{GraphObject, GraphWriter};
-use osrank::algorithm::{osrank_naive, random_walk, rank_network};
+use oscoin_graph_api::{GraphAlgorithm, GraphWriter};
+use osrank::algorithm::{random_walk, rank_network, OsrankNaiveAlgorithm, OsrankNaiveMockContext};
 use osrank::importers::csv::import_network;
 use osrank::protocol_traits::graph::GraphExtras;
 use osrank::protocol_traits::ledger::{LedgerView, MockLedger};
-use osrank::types::network::{Artifact, ArtifactType, DependencyType, Network};
-use osrank::types::{Osrank, Weight};
+use osrank::types::mock::{Mock, MockNetwork};
+use osrank::types::network::{ArtifactType, DependencyType, Network};
+use osrank::types::Weight;
 use rand_xorshift::XorShiftRng;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
-type MockNetwork = Network<f64>;
+fn construct_osrank_naive_algorithm<'a>() -> (
+    Mock<OsrankNaiveAlgorithm<'a, MockNetwork, MockLedger>>,
+    OsrankNaiveMockContext<'a, MockNetwork>,
+) {
+    let algo: Mock<OsrankNaiveAlgorithm<MockNetwork, MockLedger>> = Mock {
+        unmock: OsrankNaiveAlgorithm::default(),
+    };
 
-fn construct_network_small() -> Network<f64> {
+    let ctx = OsrankNaiveMockContext::default();
+
+    (algo, ctx)
+}
+
+fn construct_network_small() -> MockNetwork {
     let mut network = Network::default();
     for node in &["p1", "p2", "p3"] {
         network.add_node(
@@ -64,7 +76,7 @@ fn construct_network_small() -> Network<f64> {
     network
 }
 
-fn construct_network(meta_num: usize, contributions_num: usize) -> Network<f64> {
+fn construct_network(meta_num: usize, contributions_num: usize) -> MockNetwork {
     let deps_reader = BufReader::new(File::open("data/cargo_dependencies.csv").unwrap())
         .split(b'\n')
         .map(|l| l.unwrap())
@@ -99,31 +111,21 @@ fn construct_network(meta_num: usize, contributions_num: usize) -> Network<f64> 
     .unwrap()
 }
 
-fn run_osrank_naive(mut network: &mut Network<f64>, iter: u32, initial_seed: [u8; 16]) {
-    let mut mock_ledger = MockLedger::default();
-    mock_ledger.set_random_walks_num(iter);
-    let set_osrank = Box::new(|node: &Artifact<String>, rank| match node.data() {
-        ArtifactType::Project { osrank: _ } => ArtifactType::Project { osrank: rank },
-        ArtifactType::Account { osrank: _ } => ArtifactType::Account { osrank: rank },
-    });
-    osrank_naive::<MockLedger, MockNetwork, XorShiftRng>(
-        None,
-        &mut network,
-        &mock_ledger,
-        initial_seed,
-        set_osrank,
-    )
-    .unwrap();
+fn run_osrank_naive(mut network: &mut MockNetwork, iter: u32, initial_seed: [u8; 16]) {
+    let (algo, mut ctx) = construct_osrank_naive_algorithm();
+    ctx.ledger_view.set_random_walks_num(iter);
+    algo.execute(&mut ctx, &mut network, initial_seed).unwrap();
 }
 
-fn run_random_walk(network: &Network<f64>, iter: u32, initial_seed: [u8; 16]) {
+fn run_random_walk(network: &MockNetwork, iter: u32, initial_seed: [u8; 16]) {
     let mut mock_ledger = MockLedger::default();
+
     mock_ledger.set_random_walks_num(iter);
     random_walk::<MockLedger, MockNetwork, XorShiftRng>(
         None,
         &network,
         &mock_ledger,
-        XorShiftRng::from_seed(initial_seed.clone()),
+        &mut XorShiftRng::from_seed(initial_seed.clone()),
     )
     .unwrap();
 }
@@ -143,7 +145,10 @@ fn bench_osrank_naive_on_small_network(c: &mut Criterion) {
 // run with a lower sample size to speed things up
 fn bench_osrank_naive_on_sample_csv(c: &mut Criterion) {
     let mut network = construct_network(1_000, 10_000);
-    let info = format!("(dev) osrank with {:?} nodes, iter: 1", &network.node_count());
+    let info = format!(
+        "(dev) osrank with {:?} nodes, iter: 1",
+        &network.node_count()
+    );
     c.bench(
         &info,
         Benchmark::new("sample size 10", move |b| {
@@ -166,18 +171,15 @@ fn bench_random_walk_on_csv(c: &mut Criterion) {
 
 fn bench_rank_network(c: &mut Criterion) {
     let mut network = construct_network(1_000, 10_000);
-    let mut mock_ledger = MockLedger::default();
-    mock_ledger.set_random_walks_num(1);
-    let set_osrank: Box<dyn Fn(&Artifact<String>, Osrank) -> ArtifactType> =
-        Box::new(|node: &Artifact<String>, rank| match node.data() {
-            ArtifactType::Project { osrank: _ } => ArtifactType::Project { osrank: rank },
-            ArtifactType::Account { osrank: _ } => ArtifactType::Account { osrank: rank },
-        });
+
+    let (_algo, mut ctx) = construct_osrank_naive_algorithm();
+    ctx.ledger_view.set_random_walks_num(1);
+
     let walks = random_walk::<MockLedger, MockNetwork, XorShiftRng>(
         None,
         &network,
-        &mock_ledger,
-        XorShiftRng::from_seed([0; 16]),
+        &ctx.ledger_view,
+        &mut XorShiftRng::from_seed([0; 16]),
     )
     .unwrap()
     .walks;
@@ -189,7 +191,7 @@ fn bench_rank_network(c: &mut Criterion) {
     c.bench(
         &info,
         Benchmark::new("sample size 10", move |b| {
-            b.iter(|| rank_network(&walks, &mut network, &mock_ledger, &set_osrank))
+            b.iter(|| rank_network(&walks, &mut network, &ctx.ledger_view, &ctx.set_osrank))
         })
         .sample_size(10),
     );
@@ -207,9 +209,7 @@ fn bench_nightly_osrank_naive(c: &mut Criterion) {
             let nodes = &network.node_count();
             group.bench_function(
                 BenchmarkId::new(format!("Iter {}", &iter), nodes),
-                move |b| {
-                    b.iter(|| run_osrank_naive(&mut network, *iter as u32, [0; 16]))
-                }
+                move |b| b.iter(|| run_osrank_naive(&mut network, *iter as u32, [0; 16])),
             );
         }
 
@@ -218,9 +218,7 @@ fn bench_nightly_osrank_naive(c: &mut Criterion) {
             let nodes = &network.node_count();
             group.bench_function(
                 BenchmarkId::new(format!("Iter {}", &iter), nodes),
-                move |b| {
-                    b.iter(|| run_osrank_naive(&mut network, *iter as u32, [0; 16]))
-                }
+                move |b| b.iter(|| run_osrank_naive(&mut network, *iter as u32, [0; 16])),
             );
         }
     }
@@ -228,7 +226,8 @@ fn bench_nightly_osrank_naive(c: &mut Criterion) {
 }
 
 fn bench_nightly_random_walk(c: &mut Criterion) {
-    let mut group = c.benchmark_group("(nightly) Random walks with increasing iterator and node count");
+    let mut group =
+        c.benchmark_group("(nightly) Random walks with increasing iterator and node count");
     group.sample_size(10);
 
     for iter in &[1, 10, 100, 1_000] {
@@ -237,9 +236,7 @@ fn bench_nightly_random_walk(c: &mut Criterion) {
             let nodes = &network.node_count();
             group.bench_function(
                 BenchmarkId::new(format!("Iter {}", &iter), nodes),
-                move |b| {
-                    b.iter(|| run_random_walk(&network, *iter, [0; 16]))
-                }
+                move |b| b.iter(|| run_random_walk(&network, *iter, [0; 16])),
             );
         }
     }
