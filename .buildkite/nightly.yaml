@@ -3,6 +3,6 @@ steps:
     command: |
         cargo bench -- nightly
     env:
-      DOCKER_IMAGE: "gcr.io/opensourcecoin/osrank-build@sha256:00e4c02a7391457031c2f3d3a548e92aa44fd2341de08918968040fe9f2793eb"
+      DOCKER_IMAGE: "gcr.io/opensourcecoin/osrank-build@sha256:d9cb3dce4f4af6d9a7db1669617638fbd5719498ecdf8246d99a4e724b65139b"
     agents:
       docker: "true"
