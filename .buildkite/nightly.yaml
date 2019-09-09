@@ -1,8 +1,10 @@
 steps:
   - label: 'Benchmarks'
     command: |
-        cargo bench -- nightly
+        cargo bench -- dev
     env:
       DOCKER_IMAGE: "gcr.io/opensourcecoin/osrank-build@sha256:d9cb3dce4f4af6d9a7db1669617638fbd5719498ecdf8246d99a4e724b65139b"
     agents:
       docker: "true"
+    artifact_paths:
+      - "target/criterion/.*report.*"
