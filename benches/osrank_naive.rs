@@ -191,7 +191,7 @@ fn bench_rank_network(c: &mut Criterion) {
     c.bench(
         &info,
         Benchmark::new("sample size 10", move |b| {
-            b.iter(|| rank_network(&walks, &mut network, &ctx.ledger_view, &ctx.from_osrank))
+            b.iter(|| rank_network(&walks, &mut network, &ctx.ledger_view, &ctx.set_osrank))
         })
         .sample_size(10),
     );

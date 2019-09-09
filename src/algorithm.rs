@@ -27,11 +27,15 @@ use std::marker::PhantomData;
 use std::ops::AddAssign;
 
 #[derive(Debug, PartialEq, Eq)]
+/// Errors that the `osrank` algorithm might throw.
 pub enum OsrankError {
-    UknownError,
+    /// Generic, catch-all error for things which can go wrong during the
+    /// algorithm.
+    UnknownError,
 }
 
 #[derive(Debug)]
+/// The output from a random walk.
 pub struct WalkResult<G, I>
 where
     I: Eq + Hash,
@@ -84,10 +88,11 @@ where
     walks
 }
 
-// FIXME(adn) It should be possible to make this code parametric over
-// Dependency<W>, for I have ran into a cryptic error about the SampleBorrow
-// trait not be implemented, and wasn't able to immediately make the code
-// typecheck.
+/// Performs a random walk over the input network `G`.
+///
+/// If a `SeedSet` is provided, this function will produce a collection of
+/// _trusted nodes_ to be used for subsequent walks, otherwise the entire
+/// network is returned.
 pub fn random_walk<L, G, RNG>(
     seed_set: Option<&SeedSet<Id<G::Node>>>,
     network: &G,
@@ -129,9 +134,10 @@ where
     }
 }
 
-/// Naive version of the algorithm that given a full Network and a precomputed
-/// set W of random walks, iterates over each edge of the Network and computes
-/// the osrank.
+/// Naive version of the `osrank` algorithm
+///
+/// Given a full network `G` and an optional `SeedSet`, iterates over each
+/// edge of the network and computes the `Osrank`.
 pub fn osrank_naive<G>(
     seed_set: Option<&SeedSet<Id<G::Node>>>,
     network: &mut G,
@@ -161,6 +167,7 @@ where
     }
 }
 
+/// Assigns an `Osrank` to a `Node`.
 fn rank_node<L, G>(
     random_walks: &RandomWalks<Id<G::Node>>,
     node_id: Id<G::Node>,
@@ -195,6 +202,7 @@ where
     }
 }
 
+/// Assigns an `Osrank` to a network `G`.
 pub fn rank_network<'a, L, G: 'a>(
     random_walks: &RandomWalks<Id<G::Node>>,
     network_view: &'a mut G,
@@ -215,7 +223,21 @@ where
     Ok(())
 }
 
-/// Marker type used to implement
+/// This is a marker type used to implement a valid instance for `GraphAlgorithm`.
+///
+/// The term "marker" comes from the standard Rust [nomenclature](https://doc.rust-lang.org/std/marker/index.html)
+/// to indicate types that have as main purpose the one of "carrying information"
+/// around. In this case, we do need a `G` and a `L` in scope, as well as a valid
+/// lifetime `'a` to exist in scope when we implement `GraphAlgorithm`, but we
+/// might not necessary have one at hand. This is where the [PhantomData](https://doc.rust-lang.org/std/marker/struct.PhantomData.html)
+/// marker type comes into play. It has a trivial type constructor but it allows
+/// us to carry a "witness" that we have a `G`, `L` and `'a` in scope. For the
+/// astute Haskeller, this is essentially the same as
+///
+/// ```haskell, no_run
+/// newtype PhantomData a = PhantomData
+/// ```
+///
 pub struct OsrankNaiveAlgorithm<'a, G: 'a, L> {
     graph: PhantomData<G>,
     ledger: PhantomData<L>,
@@ -232,13 +254,23 @@ impl<'a, G, L> Default for OsrankNaiveAlgorithm<'a, G, L> {
     }
 }
 
+/// The `Context` that the osrank naive _mock_ algorithm will need.
 pub struct OsrankNaiveMockContext<'a, G = MockNetwork>
 where
     G: Graph,
 {
+    /// The optional `SeetSet` to use.
     pub seed_set: Option<&'a SeedSet<Id<G::Node>>>,
+    /// The `LedgerView` for this context, i.e. a `MockLedger`.
     pub ledger_view: MockLedger,
-    pub from_osrank: &'a (dyn Fn(&mut G::Node, Osrank) -> ()),
+    /// The `set_osrank` function is a "setter" function that given a
+    /// generic `Node` "knows" what to do with the input `Osrank`. This
+    /// function is necessary to bridge the gap between the algorithm being
+    /// written in a totally generic way and `GraphObject`'s nodes not exposing
+    /// a "set_osrank" function directly. Therefore we need some setter function
+    /// which can interpret the `Osrank` and manipulate correctly the input
+    /// `G::Node`.
+    pub set_osrank: &'a (dyn Fn(&mut G::Node, Osrank) -> ()),
 }
 
 impl<'a> Default for OsrankNaiveMockContext<'a, MockNetwork> {
@@ -246,7 +278,7 @@ impl<'a> Default for OsrankNaiveMockContext<'a, MockNetwork> {
         OsrankNaiveMockContext {
             seed_set: None,
             ledger_view: MockLedger::default(),
-            from_osrank: &mock_network_set_osrank,
+            set_osrank: &mock_network_set_osrank,
         }
     }
 }
@@ -286,7 +318,7 @@ where
             graph,
             &ctx.ledger_view,
             &mut rng,
-            &ctx.from_osrank,
+            &ctx.set_osrank,
         )
     }
 }
