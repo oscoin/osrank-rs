@@ -8,21 +8,16 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 
-static GEXF_META: &str = r###"<?xml version="1.0" encoding="UTF-8"?>
-<gexf xmlns="http://www.gexf.net/1.1draft" version="1.1" xmlns:viz="http://www.gexf.net/1.1draft/viz" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.gexf.net/1.1draft http://www.gexf.net/1.1draft/gexf.xsd">
-  <meta lastmodifieddate="2011-09-05">
-    <creator>Gephi 0.8</creator>
-    <description></description>
-  </meta>
-  <graph defaultedgetype="directed">
-  <attributes class="node" mode="static">
-    <attribute id="modularity_class" title="Modularity Class" type="integer">
-      <default>0</default>
-    </attribute>
-  </attributes>
+static GRAPHML_META: &str = r###"<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns"  
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:y="http://www.yworks.com/xml/graphml"
+    xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns
+     http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd">
+     <key for="node" id="node_style" yfiles.type="nodegraphics"/>
 "###;
 
-static GEXF_FOOTER: &str = "</gexf>";
+static GRAPHML_FOOTER: &str = "</graphml>";
 
 #[derive(Debug)]
 pub enum ExportError {
@@ -35,7 +30,7 @@ impl From<std::io::Error> for ExportError {
     }
 }
 
-pub trait IntoGefxXml {
+pub trait IntoGraphMlXml {
     fn render(&self) -> String;
 }
 
@@ -44,22 +39,22 @@ struct GexfAttribute<K, V> {
     attr_value: V,
 }
 
-impl IntoGefxXml for String {
+impl IntoGraphMlXml for String {
     fn render(&self) -> String {
         self.clone()
     }
 }
 
-impl IntoGefxXml for usize {
+impl IntoGraphMlXml for usize {
     fn render(&self) -> String {
         format!("{}", self)
     }
 }
 
-impl<K, V> IntoGefxXml for GexfAttribute<K, V>
+impl<K, V> IntoGraphMlXml for GexfAttribute<K, V>
 where
-    K: IntoGefxXml,
-    V: IntoGefxXml,
+    K: IntoGraphMlXml,
+    V: IntoGraphMlXml,
 {
     fn render(&self) -> String {
         format!(
@@ -70,9 +65,9 @@ where
     }
 }
 
-impl<V> IntoGefxXml for Option<V>
+impl<V> IntoGraphMlXml for Option<V>
 where
-    V: IntoGefxXml,
+    V: IntoGraphMlXml,
 {
     fn render(&self) -> String {
         match self {
@@ -82,32 +77,27 @@ where
     }
 }
 
-struct GexfNode<I> {
+struct GraphMlNode<I> {
     id: I,
     label: Option<String>,
     attrs: Vec<GexfAttribute<String, String>>,
 }
 
-impl<I> IntoGefxXml for GexfNode<I>
+impl<I> IntoGraphMlXml for GraphMlNode<I>
 where
-    I: IntoGefxXml,
+    I: IntoGraphMlXml,
 {
     fn render(&self) -> String {
-        let mut values = String::new();
-
-        for a in &self.attrs {
-            values.push_str(a.render().as_str())
-        }
-
         format!(
-            r###"<node id="{}" label="{}">
-        <viz:size value="10"></viz:size>
-        <viz:color r="168" g="168" b="29"></viz:color>
-        <attvalues>{}</attvalues>
-        </node>"###,
+            r###"<node id="{}">
+                <data key="node_style">
+                  <y:ShapeNode>
+                    <y:NodeLabel>{}</y:NodeLabel>
+                 </y:ShapeNode>
+                </data>
+</node>"###,
             self.id.render(),
-            self.label.render(),
-            values
+            self.label.render()
         )
     }
 }
@@ -118,10 +108,10 @@ struct GexfEdge<I, N> {
     target: N,
 }
 
-impl<I, N> IntoGefxXml for GexfEdge<I, N>
+impl<I, N> IntoGraphMlXml for GexfEdge<I, N>
 where
-    I: IntoGefxXml,
-    N: IntoGefxXml,
+    I: IntoGraphMlXml,
+    N: IntoGraphMlXml,
 {
     fn render(&self) -> String {
         format!(
@@ -133,13 +123,13 @@ where
     }
 }
 
-/// Converts a `Graph::Node` into some GEXF tags.
+/// Converts a `Graph::Node` into some GRAPHML tags.
 fn write_node<N>(node: &N, out: &mut File) -> Result<(), ExportError>
 where
     N: GraphObject,
-    N::Id: IntoGefxXml + Clone + TryInto<String>,
+    N::Id: IntoGraphMlXml + Clone + TryInto<String>,
 {
-    let gexf_node = GexfNode {
+    let gexf_node = GraphMlNode {
         id: node.id().clone(),
         label: Some(
             node.id()
@@ -154,11 +144,11 @@ where
     Ok(())
 }
 
-/// Converts a `Graph::Edge` into some GEXF tags.
+/// Converts a `Graph::Edge` into some GRAPHML tags.
 fn write_edge<N, E>(edge: &EdgeRef<N, E>, out: &mut File) -> Result<(), ExportError>
 where
-    E: IntoGefxXml + Clone,
-    N: IntoGefxXml + Clone,
+    E: IntoGraphMlXml + Clone,
+    N: IntoGraphMlXml + Clone,
 {
     let gexf_edge = GexfEdge {
         id: edge.id.clone(),
@@ -170,16 +160,16 @@ where
     Ok(())
 }
 
-/// Converts the `Graph` into some GEXF tags.
+/// Converts the `Graph` into some GRAPHML tags.
 fn write_graph<G>(g: &G, out: &mut File) -> Result<(), ExportError>
 where
     G: Graph,
-    <G::Node as GraphObject>::Id: IntoGefxXml + Clone + TryInto<String>,
-    <G::Edge as GraphObject>::Id: IntoGefxXml + Clone,
+    <G::Node as GraphObject>::Id: IntoGraphMlXml + Clone + TryInto<String>,
+    <G::Edge as GraphObject>::Id: IntoGraphMlXml + Clone,
 {
     let mut all_edges = Vec::new();
 
-    out.write_all(b"<nodes>\n")?;
+    out.write_all(b"<graph id=\"osrank\" edgedefault=\"directed\">\n")?;
 
     for n in g.nodes() {
         write_node(n, out)?;
@@ -187,33 +177,33 @@ where
         all_edges.extend(g.edges_directed(n.id(), Direction::Outgoing))
     }
 
-    out.write_all(b"</nodes>\n<edges>")?;
-
     for e in &all_edges {
         write_edge(e, out)?;
         out.write_all(b"\n")?;
     }
 
-    out.write_all(b"</edges>\n</graph>")?;
+    out.write_all(b"</graph>")?;
 
     Ok(())
 }
 
-/// Exports a graph `G` to a `.gexf` file.
+/// Exports a graph `G` to a `.graphml` file.
 ///
 /// This file can then be imported into one of the many graph visualisers,
 /// like [Gephi](https://gephi.org/).
+/// For a more exhaustive explanation of GraphML, refers to the
+/// [official documentation](http://graphml.graphdrawing.org/).
 pub fn export_graph<G>(g: &G, out: &Path) -> Result<(), ExportError>
 where
     G: Graph,
-    <G::Node as GraphObject>::Id: IntoGefxXml + Clone + TryInto<String>,
-    <G::Edge as GraphObject>::Id: IntoGefxXml + Clone,
+    <G::Node as GraphObject>::Id: IntoGraphMlXml + Clone + TryInto<String>,
+    <G::Edge as GraphObject>::Id: IntoGraphMlXml + Clone,
 {
     let mut out_file = OpenOptions::new().write(true).create_new(true).open(out)?;
 
-    out_file.write_all(GEXF_META.as_bytes())?;
+    out_file.write_all(GRAPHML_META.as_bytes())?;
     write_graph(g, &mut out_file)?;
-    out_file.write_all(GEXF_FOOTER.as_bytes())?;
+    out_file.write_all(GRAPHML_FOOTER.as_bytes())?;
 
     Ok(())
 }

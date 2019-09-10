@@ -9,7 +9,7 @@ extern crate clap;
 
 use clap::{App, Arg};
 
-use osrank::exporters::gexf;
+use osrank::exporters::{gexf, graphml};
 use osrank::importers::csv::{import_network, CsvImportError};
 use osrank::protocol_traits::ledger::MockLedger;
 use osrank::types::mock::MockNetwork;
@@ -20,7 +20,8 @@ use std::path::Path;
 #[derive(Debug)]
 enum AppError {
     ImportError(CsvImportError),
-    ExportError(gexf::ExportError),
+    GexfExportError(gexf::ExportError),
+    GraphMlExportError(graphml::ExportError),
 }
 
 impl From<CsvImportError> for AppError {
@@ -31,7 +32,13 @@ impl From<CsvImportError> for AppError {
 
 impl From<gexf::ExportError> for AppError {
     fn from(err: gexf::ExportError) -> AppError {
-        AppError::ExportError(err)
+        AppError::GexfExportError(err)
+    }
+}
+
+impl From<graphml::ExportError> for AppError {
+    fn from(err: graphml::ExportError) -> AppError {
+        AppError::GraphMlExportError(err)
     }
 }
 
@@ -98,9 +105,11 @@ fn main() -> Result<(), AppError> {
         &mock_ledger,
     )?;
 
-    debug!("Exporting the network...");
+    debug!("Exporting the network to .gexf ...");
+    gexf::export_graph(&network, &Path::new(&(out.to_owned() + ".gexf")))?;
 
-    gexf::export_graph(&network, &Path::new(out))?;
+    debug!("Exporting the network to .graphml ...");
+    graphml::export_graph(&network, &Path::new(&(out.to_owned() + ".graphml")))?;
 
     debug!("Done.");
 
