@@ -1,8 +1,9 @@
 #![allow(unknown_lints)]
 #![warn(clippy::all)]
 
-use crate::protocol_traits::graph::{EdgeReference, Graph, GraphObject};
+use oscoin_graph_api::{Direction, EdgeRef, Graph, GraphObject};
 
+use std::convert::TryInto;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
@@ -136,11 +137,16 @@ where
 fn write_node<N>(node: &N, out: &mut File) -> Result<(), ExportError>
 where
     N: GraphObject,
-    N::Id: IntoGefxXml + Clone,
+    N::Id: IntoGefxXml + Clone + TryInto<String>,
 {
     let gexf_node = GexfNode {
         id: node.id().clone(),
-        label: Some("test".to_string()),
+        label: Some(
+            node.id()
+                .clone()
+                .try_into()
+                .unwrap_or(String::from("Unlabeled node")),
+        ),
         attrs: Vec::new(),
     };
 
@@ -149,15 +155,15 @@ where
 }
 
 /// Converts a `Graph::Edge` into some GEXF tags.
-fn write_edge<N, E>(edge: &EdgeReference<N, E>, out: &mut File) -> Result<(), ExportError>
+fn write_edge<N, E>(edge: &EdgeRef<N, E>, out: &mut File) -> Result<(), ExportError>
 where
     E: IntoGefxXml + Clone,
     N: IntoGefxXml + Clone,
 {
     let gexf_edge = GexfEdge {
         id: edge.id.clone(),
-        source: edge.source.clone(),
-        target: edge.target.clone(),
+        source: edge.from.clone(),
+        target: edge.to.clone(),
     };
 
     out.write_all(gexf_edge.render().as_bytes())?;
@@ -168,7 +174,7 @@ where
 fn write_graph<G>(g: &G, out: &mut File) -> Result<(), ExportError>
 where
     G: Graph,
-    <G::Node as GraphObject>::Id: IntoGefxXml + Clone,
+    <G::Node as GraphObject>::Id: IntoGefxXml + Clone + TryInto<String>,
     <G::Edge as GraphObject>::Id: IntoGefxXml + Clone,
 {
     let mut all_edges = Vec::new();
@@ -178,7 +184,7 @@ where
     for n in g.nodes() {
         write_node(n, out)?;
         out.write_all(b"\n")?;
-        all_edges.extend(g.neighbours(n.id()))
+        all_edges.extend(g.edges_directed(n.id(), Direction::Outgoing))
     }
 
     out.write_all(b"</nodes>\n<edges>")?;
@@ -196,7 +202,7 @@ where
 pub fn export_graph<G>(g: &G, out: &Path) -> Result<(), ExportError>
 where
     G: Graph,
-    <G::Node as GraphObject>::Id: IntoGefxXml + Clone,
+    <G::Node as GraphObject>::Id: IntoGefxXml + Clone + TryInto<String>,
     <G::Edge as GraphObject>::Id: IntoGefxXml + Clone,
 {
     let mut out_file = OpenOptions::new().write(true).create_new(true).open(out)?;
