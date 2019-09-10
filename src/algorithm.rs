@@ -292,6 +292,23 @@ fn mock_network_set_osrank(node: &mut Artifact<String>, rank: Osrank) {
     *node.data_mut() = new_data;
 }
 
+/// A *mock* implementation for the `OsrankNaiveAlgorithm`, using the `Mock`
+/// newtype wrapper.
+///
+/// Refer to the documentation for `osrank::types::mock::Mock` for the idea
+/// behind the `Mock` type, but in brief we do not want to have an
+/// implementation for the `OsrankNaiveAlgorithm` that depends on *mock* data,
+/// yet it's useful to do so in tests. If we were to write:
+///
+/// ```ignore, no_run
+/// impl<'a, G, L> GraphAlgorithm<G> OsrankNaiveAlgorithm<'a, G, L>
+/// ...
+/// ```
+///
+/// This was now preventing us from definiting a trait implementation for the
+/// *real* algorithm, using *real* data. This is why the `Mock` wrapper is so
+/// handy: `Mock a` it's really still isomorphic to `a`, but allows us to
+/// define otherwise-conflicting instances.
 impl<'a, G, L> GraphAlgorithm<G> for Mock<OsrankNaiveAlgorithm<'a, G, L>>
 where
     G: GraphExtras + Clone,
