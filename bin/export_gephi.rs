@@ -9,19 +9,28 @@ extern crate clap;
 
 use clap::{App, Arg};
 
+use oscoin_graph_api::GraphAlgorithm;
+use osrank::algorithm::{OsrankError, OsrankNaiveAlgorithm, OsrankNaiveMockContext};
 use osrank::exporters::{gexf, graphml};
 use osrank::importers::csv::{import_network, CsvImportError};
-use osrank::protocol_traits::ledger::MockLedger;
-use osrank::types::mock::MockNetwork;
+use osrank::protocol_traits::ledger::{LedgerView, MockLedger};
+use osrank::types::mock::{Mock, MockNetwork};
 
 use std::fs::File;
 use std::path::Path;
 
 #[derive(Debug)]
 enum AppError {
+    AlgorithmError(OsrankError),
     ImportError(CsvImportError),
     GexfExportError(gexf::ExportError),
     GraphMlExportError(graphml::ExportError),
+}
+
+impl From<OsrankError> for AppError {
+    fn from(err: OsrankError) -> AppError {
+        AppError::AlgorithmError(err)
+    }
 }
 
 impl From<CsvImportError> for AppError {
@@ -93,17 +102,27 @@ fn main() -> Result<(), AppError> {
     let deps_meta_csv_file = File::open(deps_meta).unwrap();
     let contribs_csv_file = File::open(contribs).unwrap();
 
-    let mock_ledger = MockLedger::default();
-
     debug!("Importing the network...");
 
-    let network = import_network::<MockNetwork, MockLedger, File>(
+    let algo: Mock<OsrankNaiveAlgorithm<MockNetwork, MockLedger>> = Mock {
+        unmock: OsrankNaiveAlgorithm::default(),
+    };
+    let mut ctx = OsrankNaiveMockContext::default();
+    ctx.ledger_view.set_random_walks_num(5);
+
+    let mut network = import_network::<MockNetwork, MockLedger, File>(
         csv::Reader::from_reader(deps_csv_file),
         csv::Reader::from_reader(deps_meta_csv_file),
         csv::Reader::from_reader(contribs_csv_file),
         None,
-        &mock_ledger,
+        &ctx.ledger_view,
     )?;
+
+    debug!("Calculating the osrank (mock naive algorithm)...");
+
+    let initial_seed = [0; 16];
+
+    algo.execute(&mut ctx, &mut network, initial_seed)?;
 
     debug!("Exporting the network to .gexf ...");
     gexf::export_graph(&network, &Path::new(&(out.to_owned() + ".gexf")))?;

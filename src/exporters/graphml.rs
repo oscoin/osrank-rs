@@ -4,10 +4,12 @@
 use crate::types::network::ArtifactType;
 use oscoin_graph_api::{Direction, Edge, EdgeRef, Graph, GraphObject};
 
+use fraction::ToPrimitive;
 use num_traits::Zero;
 use std::convert::TryInto;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
+use std::marker::PhantomData;
 use std::path::Path;
 
 /// The static header for a `.graphml` file.
@@ -22,6 +24,9 @@ static GRAPHML_META: &str = r###"<?xml version="1.0" encoding="UTF-8"?>
      http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd">
      <key for="edge" id="edge_weight" attr.name="weight" attr.type="double"/>
      <key attr.name="label" attr.type="string" for="node" id="label"/>
+     <key attr.name="rank" attr.type="float" for="node" id="rank">
+       <default>0.0</default>
+     </key>
      <key attr.name="r" attr.type="int" for="node" id="r">
        <default>0</default>
      </key>
@@ -101,19 +106,33 @@ impl IntoGraphMlXml for RgbColor {
     }
 }
 
-pub struct NodeStyle {
-    label: String,
-    fill_color: RgbColor,
+/// A rank for a node.
+///
+/// The `PhantomData` stores the type we need to convert _from_.
+#[derive(Debug, Clone)]
+pub struct Rank<T> {
+    rank: f64,
+    from_type: PhantomData<T>,
 }
 
-impl IntoGraphMlXml for NodeStyle {
+pub struct NodeAttrs {
+    label: String,
+    fill_color: RgbColor,
+    size: f64,
+    rank: f64,
+}
+
+impl IntoGraphMlXml for NodeAttrs {
     fn render(&self) -> String {
         format!(
             r###"<data key="label">{}</data>
-                 <data key="size">10.0</data>
+                 <data key="size">{}</data>
+                 <data key="rank">{}</data>
                  {}
                 "###,
             self.label,
+            self.size,
+            self.rank,
             self.fill_color.render()
         )
     }
@@ -143,7 +162,7 @@ impl std::convert::From<NodeType> for RgbColor where {
 
 struct GraphMlNode<I> {
     id: I,
-    node_style: NodeStyle,
+    node_style: NodeAttrs,
 }
 
 impl<I> IntoGraphMlXml for GraphMlNode<I>
@@ -189,25 +208,38 @@ where
 fn write_node<N>(node: &N, out: &mut File) -> Result<(), ExportError>
 where
     N: GraphObject,
-    <N as GraphObject>::Data: Clone + Into<NodeType>,
+    <N as GraphObject>::Data: Clone + Into<NodeType> + Into<Rank<f64>>,
     <N as GraphObject>::Id: IntoGraphMlXml + Clone + TryInto<String>,
 {
     let data: <N as GraphObject>::Data = (*node).data().clone();
+    let rank: Rank<f64> = data.clone().into();
+    let node_type: NodeType = data.clone().into();
     let lbl = node
         .id()
         .clone()
         .try_into()
         .unwrap_or_else(|_| String::from("Unlabeled node"));
+
     let gexf_node = GraphMlNode {
         id: node.id().clone(),
-        node_style: NodeStyle {
+        node_style: NodeAttrs {
             label: lbl,
-            fill_color: data.into().into(),
+            size: size_from_rank(rank.rank),
+            rank: rank.rank,
+            fill_color: node_type.into(),
         },
     };
 
     out.write_all(gexf_node.render().as_bytes())?;
     Ok(())
+}
+
+fn size_from_rank(r: f64) -> f64 {
+    if r <= 0.00005 {
+        10.0
+    } else {
+        10.0 + (90.0 * r)
+    }
 }
 
 /// Converts a `Graph::Edge` into some GRAPHML tags.
@@ -244,7 +276,7 @@ where
 fn write_graph<G>(g: &G, out: &mut File) -> Result<(), ExportError>
 where
     G: Graph,
-    <G::Node as GraphObject>::Data: Clone + Into<NodeType>,
+    <G::Node as GraphObject>::Data: Clone + Into<NodeType> + Into<Rank<f64>>,
     <G::Node as GraphObject>::Id: IntoGraphMlXml + Clone + TryInto<String>,
     <G::Edge as GraphObject>::Id: IntoGraphMlXml + Clone,
     <G as Graph>::Weight: IntoGraphMlXml + Zero,
@@ -278,7 +310,7 @@ where
 pub fn export_graph<G>(g: &G, out: &Path) -> Result<(), ExportError>
 where
     G: Graph,
-    <G::Node as GraphObject>::Data: Clone + Into<NodeType>,
+    <G::Node as GraphObject>::Data: Clone + Into<NodeType> + Into<Rank<f64>>,
     <G::Node as GraphObject>::Id: IntoGraphMlXml + Clone + TryInto<String>,
     <G::Edge as GraphObject>::Id: IntoGraphMlXml + Clone,
     <G as Graph>::Weight: IntoGraphMlXml + Zero,
@@ -299,6 +331,15 @@ impl std::convert::From<ArtifactType> for NodeType where {
         match atype {
             ArtifactType::Project { .. } => NodeType::Project,
             ArtifactType::Account { .. } => NodeType::Account,
+        }
+    }
+}
+
+impl std::convert::From<ArtifactType> for Rank<f64> where {
+    fn from(atype: ArtifactType) -> Self {
+        Rank {
+            rank: atype.get_osrank().to_f64().unwrap_or(0.0),
+            from_type: PhantomData,
         }
     }
 }
