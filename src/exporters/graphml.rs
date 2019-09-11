@@ -1,8 +1,9 @@
 #![allow(unknown_lints)]
 #![warn(clippy::all)]
 
-use oscoin_graph_api::{Direction, EdgeRef, Graph, GraphObject};
+use oscoin_graph_api::{Direction, Edge, EdgeRef, Graph, GraphObject};
 
+use num_traits::Zero;
 use std::convert::TryInto;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -15,6 +16,7 @@ static GRAPHML_META: &str = r###"<?xml version="1.0" encoding="UTF-8"?>
     xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns
      http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd">
      <key for="node" id="node_style" yfiles.type="nodegraphics"/>
+     <key for="edge" id="edge_weight" attr.name="weight" attr.type="double"/>
 "###;
 
 static GRAPHML_FOOTER: &str = "</graphml>";
@@ -42,6 +44,12 @@ struct GexfAttribute<K, V> {
 impl IntoGraphMlXml for String {
     fn render(&self) -> String {
         self.clone()
+    }
+}
+
+impl IntoGraphMlXml for f64 {
+    fn render(&self) -> String {
+        format!("{}", self)
     }
 }
 
@@ -102,23 +110,28 @@ where
     }
 }
 
-struct GexfEdge<I, N> {
+struct GexfEdge<I, N, W> {
     id: I,
     source: N,
     target: N,
+    weight: W,
 }
 
-impl<I, N> IntoGraphMlXml for GexfEdge<I, N>
+impl<I, N, W> IntoGraphMlXml for GexfEdge<I, N, W>
 where
     I: IntoGraphMlXml,
     N: IntoGraphMlXml,
+    W: IntoGraphMlXml,
 {
     fn render(&self) -> String {
         format!(
-            "<edge id=\"{}\" source=\"{}\" target=\"{}\"/>",
+            r###"<edge id="{}" source="{}" target="{}">
+                   <data key="edge_weight">{}</data>
+</edge>"###,
             self.id.render(),
             self.source.render(),
             self.target.render(),
+            self.weight.render()
         )
     }
 }
@@ -135,7 +148,7 @@ where
             node.id()
                 .clone()
                 .try_into()
-                .unwrap_or(String::from("Unlabeled node")),
+                .unwrap_or_else(|_| String::from("Unlabeled node")),
         ),
         attrs: Vec::new(),
     };
@@ -145,15 +158,29 @@ where
 }
 
 /// Converts a `Graph::Edge` into some GRAPHML tags.
-fn write_edge<N, E>(edge: &EdgeRef<N, E>, out: &mut File) -> Result<(), ExportError>
+fn write_edge<G>(
+    g: &G,
+    edge: &EdgeRef<<G::Node as GraphObject>::Id, <G::Edge as GraphObject>::Id>,
+    out: &mut File,
+) -> Result<(), ExportError>
 where
-    E: IntoGraphMlXml + Clone,
-    N: IntoGraphMlXml + Clone,
+    G: Graph,
+    <G::Node as GraphObject>::Id: IntoGraphMlXml + Clone,
+    <G::Edge as GraphObject>::Id: IntoGraphMlXml + Clone,
+    <G as Graph>::Weight: IntoGraphMlXml + Zero,
 {
-    let gexf_edge = GexfEdge {
+    let gexf_edge: GexfEdge<
+        <G::Edge as GraphObject>::Id,
+        <G::Node as GraphObject>::Id,
+        <G as Graph>::Weight,
+    > = GexfEdge {
         id: edge.id.clone(),
         source: edge.from.clone(),
         target: edge.to.clone(),
+        weight: g
+            .get_edge(edge.id)
+            .and_then(|e| Some(e.weight()))
+            .unwrap_or_else(<G as Graph>::Weight::zero),
     };
 
     out.write_all(gexf_edge.render().as_bytes())?;
@@ -166,6 +193,7 @@ where
     G: Graph,
     <G::Node as GraphObject>::Id: IntoGraphMlXml + Clone + TryInto<String>,
     <G::Edge as GraphObject>::Id: IntoGraphMlXml + Clone,
+    <G as Graph>::Weight: IntoGraphMlXml + Zero,
 {
     let mut all_edges = Vec::new();
 
@@ -178,7 +206,7 @@ where
     }
 
     for e in &all_edges {
-        write_edge(e, out)?;
+        write_edge(g, e, out)?;
         out.write_all(b"\n")?;
     }
 
@@ -198,6 +226,7 @@ where
     G: Graph,
     <G::Node as GraphObject>::Id: IntoGraphMlXml + Clone + TryInto<String>,
     <G::Edge as GraphObject>::Id: IntoGraphMlXml + Clone,
+    <G as Graph>::Weight: IntoGraphMlXml + Zero,
 {
     let mut out_file = OpenOptions::new().write(true).create_new(true).open(out)?;
 

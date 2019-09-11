@@ -145,7 +145,7 @@ where
             node.id()
                 .clone()
                 .try_into()
-                .unwrap_or(String::from("Unlabeled node")),
+                .unwrap_or_else(|_| String::from("Unlabeled node")),
         ),
         attrs: Vec::new(),
     };
