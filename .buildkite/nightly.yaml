@@ -8,3 +8,4 @@ steps:
       docker: "true"
     artifact_paths:
       - "target/criterion/report/*"
+      - "target/criterion/**/report/*"
