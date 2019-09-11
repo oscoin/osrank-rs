@@ -1,6 +1,7 @@
 #![allow(unknown_lints)]
 #![warn(clippy::all)]
 
+use crate::types::network::ArtifactType;
 use oscoin_graph_api::{Direction, Edge, EdgeRef, Graph, GraphObject};
 
 use num_traits::Zero;
@@ -9,14 +10,30 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 
+/// The static header for a `.graphml` file.
+///
+/// NOTE: Most attributes can be interpreted by a specific viewer only.
+/// Here we did choose gephi as it seems to do a better job than Cytoscape
+/// in preserving key information like the color of nodes.
 static GRAPHML_META: &str = r###"<?xml version="1.0" encoding="UTF-8"?>
 <graphml xmlns="http://graphml.graphdrawing.org/xmlns"  
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xmlns:y="http://www.yworks.com/xml/graphml"
     xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns
      http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd">
-     <key for="node" id="node_style" yfiles.type="nodegraphics"/>
      <key for="edge" id="edge_weight" attr.name="weight" attr.type="double"/>
+     <key attr.name="label" attr.type="string" for="node" id="label"/>
+     <key attr.name="r" attr.type="int" for="node" id="r">
+       <default>0</default>
+     </key>
+     <key attr.name="g" attr.type="int" for="node" id="g">
+       <default>0</default>
+     </key>
+     <key attr.name="b" attr.type="int" for="node" id="b">
+       <default>255</default>
+     </key>
+     <key attr.name="size" attr.type="float" for="node" id="size">
+       <default>10.0</default>
+     </key>
 "###;
 
 static GRAPHML_FOOTER: &str = "</graphml>";
@@ -34,11 +51,6 @@ impl From<std::io::Error> for ExportError {
 
 pub trait IntoGraphMlXml {
     fn render(&self) -> String;
-}
-
-struct GexfAttribute<K, V> {
-    attr_for: K,
-    attr_value: V,
 }
 
 impl IntoGraphMlXml for String {
@@ -59,20 +71,6 @@ impl IntoGraphMlXml for usize {
     }
 }
 
-impl<K, V> IntoGraphMlXml for GexfAttribute<K, V>
-where
-    K: IntoGraphMlXml,
-    V: IntoGraphMlXml,
-{
-    fn render(&self) -> String {
-        format!(
-            "<attvalue for=\"{}\" value=\"{}\"/>",
-            self.attr_for.render(),
-            self.attr_value.render()
-        )
-    }
-}
-
 impl<V> IntoGraphMlXml for Option<V>
 where
     V: IntoGraphMlXml,
@@ -85,10 +83,67 @@ where
     }
 }
 
+pub struct RgbColor {
+    red: usize,
+    green: usize,
+    blue: usize,
+}
+
+impl IntoGraphMlXml for RgbColor {
+    fn render(&self) -> String {
+        format!(
+            r###"
+          <data key="r">{}</data>
+          <data key="g">{}</data>
+          <data key="b">{}</data>"###,
+            self.red, self.green, self.blue
+        )
+    }
+}
+
+pub struct NodeStyle {
+    label: String,
+    fill_color: RgbColor,
+}
+
+impl IntoGraphMlXml for NodeStyle {
+    fn render(&self) -> String {
+        format!(
+            r###"<data key="label">{}</data>
+                 <data key="size">10.0</data>
+                 {}
+                "###,
+            self.label,
+            self.fill_color.render()
+        )
+    }
+}
+
+pub enum NodeType {
+    Project,
+    Account,
+}
+
+impl std::convert::From<NodeType> for RgbColor where {
+    fn from(f: NodeType) -> Self {
+        match f {
+            NodeType::Project { .. } => RgbColor {
+                red: 0,
+                green: 0,
+                blue: 255,
+            },
+            NodeType::Account { .. } => RgbColor {
+                red: 255,
+                green: 0,
+                blue: 0,
+            },
+        }
+    }
+}
+
 struct GraphMlNode<I> {
     id: I,
-    label: Option<String>,
-    attrs: Vec<GexfAttribute<String, String>>,
+    node_style: NodeStyle,
 }
 
 impl<I> IntoGraphMlXml for GraphMlNode<I>
@@ -97,15 +152,9 @@ where
 {
     fn render(&self) -> String {
         format!(
-            r###"<node id="{}">
-                <data key="node_style">
-                  <y:ShapeNode>
-                    <y:NodeLabel>{}</y:NodeLabel>
-                 </y:ShapeNode>
-                </data>
-</node>"###,
+            r###"<node id="{}">{}</node>"###,
             self.id.render(),
-            self.label.render()
+            self.node_style.render()
         )
     }
 }
@@ -140,17 +189,21 @@ where
 fn write_node<N>(node: &N, out: &mut File) -> Result<(), ExportError>
 where
     N: GraphObject,
-    N::Id: IntoGraphMlXml + Clone + TryInto<String>,
+    <N as GraphObject>::Data: Clone + Into<NodeType>,
+    <N as GraphObject>::Id: IntoGraphMlXml + Clone + TryInto<String>,
 {
+    let data: <N as GraphObject>::Data = (*node).data().clone();
+    let lbl = node
+        .id()
+        .clone()
+        .try_into()
+        .unwrap_or_else(|_| String::from("Unlabeled node"));
     let gexf_node = GraphMlNode {
         id: node.id().clone(),
-        label: Some(
-            node.id()
-                .clone()
-                .try_into()
-                .unwrap_or_else(|_| String::from("Unlabeled node")),
-        ),
-        attrs: Vec::new(),
+        node_style: NodeStyle {
+            label: lbl,
+            fill_color: data.into().into(),
+        },
     };
 
     out.write_all(gexf_node.render().as_bytes())?;
@@ -191,6 +244,7 @@ where
 fn write_graph<G>(g: &G, out: &mut File) -> Result<(), ExportError>
 where
     G: Graph,
+    <G::Node as GraphObject>::Data: Clone + Into<NodeType>,
     <G::Node as GraphObject>::Id: IntoGraphMlXml + Clone + TryInto<String>,
     <G::Edge as GraphObject>::Id: IntoGraphMlXml + Clone,
     <G as Graph>::Weight: IntoGraphMlXml + Zero,
@@ -224,6 +278,7 @@ where
 pub fn export_graph<G>(g: &G, out: &Path) -> Result<(), ExportError>
 where
     G: Graph,
+    <G::Node as GraphObject>::Data: Clone + Into<NodeType>,
     <G::Node as GraphObject>::Id: IntoGraphMlXml + Clone + TryInto<String>,
     <G::Edge as GraphObject>::Id: IntoGraphMlXml + Clone,
     <G as Graph>::Weight: IntoGraphMlXml + Zero,
@@ -235,4 +290,15 @@ where
     out_file.write_all(GRAPHML_FOOTER.as_bytes())?;
 
     Ok(())
+}
+
+// Traits necessary to satisfy upstream constraints
+
+impl std::convert::From<ArtifactType> for NodeType where {
+    fn from(atype: ArtifactType) -> Self {
+        match atype {
+            ArtifactType::Project { .. } => NodeType::Project,
+            ArtifactType::Account { .. } => NodeType::Account,
+        }
+    }
 }
