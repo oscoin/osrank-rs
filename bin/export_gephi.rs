@@ -108,7 +108,7 @@ fn main() -> Result<(), AppError> {
         unmock: OsrankNaiveAlgorithm::default(),
     };
     let mut ctx = OsrankNaiveMockContext::default();
-    ctx.ledger_view.set_random_walks_num(5);
+    ctx.ledger_view.set_random_walks_num(1);
 
     let mut network = import_network::<MockNetwork, MockLedger, File>(
         csv::Reader::from_reader(deps_csv_file),
