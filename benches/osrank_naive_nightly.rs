@@ -15,8 +15,10 @@ fn bench_nightly_osrank_naive(c: &mut Criterion) {
     let mut group = c.benchmark_group(&nightly("Increasing node count"));
     group.sample_size(10);
 
-    for iter in &[1, 10, 100, 1_000] {
-        for count in &[1_001, 2_501, 5_001, 7_501, 10_001, 15_001] {
+    // for iter in &[1, 10, 100, 1_000] {
+    //     for count in &[1_001, 2_501, 5_001, 7_501, 10_001, 15_001] {
+    for iter in &[1, 10, 100] {
+        for count in &[1_001, 2_501, 5_001] {
             let mut network = construct_network(*count as usize, 0);
             let nodes = &network.node_count();
             group.bench_function(
@@ -25,14 +27,14 @@ fn bench_nightly_osrank_naive(c: &mut Criterion) {
             );
         }
 
-        for count in &[5_000, 10_000, 19_370] {
-            let mut network = construct_network(16_220, *count as usize);
-            let nodes = &network.node_count();
-            group.bench_function(
-                BenchmarkId::new(format!("Iter {}", &iter), nodes),
-                move |b| b.iter(|| run_osrank_naive(&mut network, *iter as u32, [0; 16])),
-            );
-        }
+        // for count in &[5_000, 10_000, 19_370] {
+        //     let mut network = construct_network(16_220, *count as usize);
+        //     let nodes = &network.node_count();
+        //     group.bench_function(
+        //         BenchmarkId::new(format!("Iter {}", &iter), nodes),
+        //         move |b| b.iter(|| run_osrank_naive(&mut network, *iter as u32, [0; 16])),
+        //     );
+        // }
     }
     group.finish();
 }
@@ -58,7 +60,7 @@ fn bench_nightly_random_walk(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    bench_nightly_osrank_naive,
-    bench_nightly_random_walk
+    bench_nightly_osrank_naive
+    // bench_nightly_random_walk
 );
 criterion_main!(benches);
