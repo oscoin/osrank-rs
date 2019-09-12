@@ -13,7 +13,7 @@ pub type MockNetwork = Network<f64>;
 
 /// Equivalent to `newtype Mock a = Mock a` in Haskell.
 ///
-/// Useful to define some trait which operates over mocks implementation only.
+/// Useful for defining some trait which operates over mocks implementation only.
 pub struct Mock<A> {
     pub unmock: A,
 }
