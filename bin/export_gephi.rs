@@ -14,7 +14,7 @@ use osrank::algorithm::{OsrankError, OsrankNaiveAlgorithm, OsrankNaiveMockContex
 use osrank::exporters::{gexf, graphml};
 use osrank::importers::csv::{import_network, CsvImportError};
 use osrank::protocol_traits::ledger::{LedgerView, MockLedger};
-use osrank::types::mock::{Mock, MockNetwork};
+use osrank::types::mock::{Mock, MockAnnotator, MockNetwork};
 
 use std::fs::File;
 use std::path::Path;
@@ -104,11 +104,12 @@ fn main() -> Result<(), AppError> {
 
     debug!("Importing the network...");
 
-    let algo: Mock<OsrankNaiveAlgorithm<MockNetwork, MockLedger>> = Mock {
-        unmock: OsrankNaiveAlgorithm::default(),
-    };
+    let algo: Mock<OsrankNaiveAlgorithm<MockNetwork, MockLedger, MockAnnotator<MockNetwork>>> =
+        Mock {
+            unmock: OsrankNaiveAlgorithm::default(),
+        };
     let mut ctx = OsrankNaiveMockContext::default();
-    ctx.ledger_view.set_random_walks_num(1);
+    ctx.ledger_view.set_random_walks_num(10);
 
     let mut network = import_network::<MockNetwork, MockLedger, File>(
         csv::Reader::from_reader(deps_csv_file),
@@ -121,8 +122,9 @@ fn main() -> Result<(), AppError> {
     debug!("Calculating the osrank (mock naive algorithm)...");
 
     let initial_seed = [0; 16];
+    let mut annotator: MockAnnotator<MockNetwork> = Default::default();
 
-    algo.execute(&mut ctx, &mut network, initial_seed)?;
+    algo.execute(&mut ctx, &mut network, &mut annotator, initial_seed)?;
 
     debug!("Exporting the network to .gexf ...");
     gexf::export_graph(&network, &Path::new(&(out.to_owned() + ".gexf")))?;
