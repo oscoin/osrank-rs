@@ -307,7 +307,7 @@ fn mock_network_set_osrank(node: &mut Artifact<String>, rank: Osrank) {
 ///
 /// This was now preventing us from defining a trait implementation for the
 /// *real* algorithm, using *real* data. This is why the `Mock` wrapper is so
-/// handy: `Mock a` it's really still isomorphic to `a`, but allows us to
+/// handy: `Mock a` is still isomorphic to `a`, but allows us to
 /// define otherwise-conflicting instances.
 impl<'a, G, L> GraphAlgorithm<G> for Mock<OsrankNaiveAlgorithm<'a, G, L>>
 where
