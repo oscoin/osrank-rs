@@ -73,6 +73,7 @@ failure_derive = { version = "0.1.5", optional = true}
 pretty_assertions = "0.6.1"
 tempfile = "^3.1.0"
 criterion = "0.3.0"
+arrayref = "0.3.5"
 
 [[bench]]
 name = "osrank_naive"

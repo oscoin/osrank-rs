@@ -6,6 +6,9 @@ extern crate quickcheck;
 #[cfg(test)]
 #[macro_use(quickcheck)]
 extern crate quickcheck_macros;
+#[cfg(test)]
+#[macro_use]
+extern crate arrayref;
 
 pub mod adjacency;
 pub mod algorithm;

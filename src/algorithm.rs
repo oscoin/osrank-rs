@@ -343,6 +343,7 @@ where
 #[cfg(test)]
 mod tests {
 
+    extern crate arrayref;
     extern crate oscoin_graph_api;
     extern crate quickcheck;
     extern crate rand;
@@ -391,6 +392,46 @@ mod tests {
     #[test]
     fn osrank_is_approx_probability_distribution() {
         quickcheck(prop_osrank_is_approx_probability_distribution as fn(MockNetwork) -> TestResult);
+    }
+
+    // Test that given the same initial seed, two osrank algorithms yields
+    // exactly the same result.
+    fn prop_osrank_is_deterministic(mut graph: MockNetwork, entropy: Vec<u8>) -> TestResult {
+        if graph.is_empty() || entropy.len() < 16 {
+            return TestResult::discard();
+        }
+
+        let initial_seed: &[u8; 16] = array_ref!(entropy.as_slice(), 0, 16);
+
+        let algo: Mock<OsrankNaiveAlgorithm<MockNetwork, MockLedger>> = Mock {
+            unmock: OsrankNaiveAlgorithm::default(),
+        };
+
+        let mut ctx1 = OsrankNaiveMockContext::default();
+        let mut ctx2 = OsrankNaiveMockContext::default();
+        let mut second_graph = graph.clone();
+
+        let first_run = algo.execute(&mut ctx1, &mut graph, *initial_seed);
+        let second_run = algo.execute(&mut ctx2, &mut second_graph, *initial_seed);
+
+        assert_eq!(first_run, second_run);
+
+        let first_ranks = graph
+            .nodes()
+            .map(|node| node.data().get_osrank())
+            .collect::<Vec<Osrank>>();
+
+        let second_ranks = second_graph
+            .nodes()
+            .map(|node| node.data().get_osrank())
+            .collect::<Vec<Osrank>>();
+
+        TestResult::from_bool(first_ranks == second_ranks)
+    }
+
+    #[test]
+    fn osrank_is_deterministic() {
+        quickcheck(prop_osrank_is_deterministic as fn(MockNetwork, Vec<u8>) -> TestResult);
     }
 
     #[test]
