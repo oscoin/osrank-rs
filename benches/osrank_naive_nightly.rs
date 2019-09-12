@@ -16,9 +16,8 @@ fn bench_nightly_osrank_naive(c: &mut Criterion) {
     group.sample_size(10);
 
     // for iter in &[1, 10, 100, 1_000] {
-    //     for count in &[1_001, 2_501, 5_001, 7_501, 10_001, 15_001] {
-    for iter in &[1, 10, 100] {
-        for count in &[1_001, 2_501, 5_001] {
+    for iter in &[1, 10] {
+        for count in &[1_001, 2_501, 5_001, 7_501, 10_001, 15_001] {
             let mut network = construct_network(*count as usize, 0);
             let nodes = &network.node_count();
             group.bench_function(
