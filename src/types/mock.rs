@@ -4,10 +4,13 @@
 extern crate oscoin_graph_api;
 
 use crate::types::network::{Artifact, DependencyType, Network};
+use crate::types::Osrank;
 use crate::util::quickcheck::frequency;
-use oscoin_graph_api::{GraphObject, GraphWriter};
+use oscoin_graph_api::{Graph, GraphAnnotator, GraphObject, GraphWriter};
 use quickcheck::{Arbitrary, Gen};
 use rand::Rng;
+use std::collections::HashMap;
+use std::hash::Hash;
 
 pub type MockNetwork = Network<f64>;
 
@@ -102,4 +105,31 @@ fn arbitrary_normalised_edges_from<'a, G: Gen + Rng>(
     }
 
     edges
+}
+
+/// A mock `GraphAnnotator` that stores the state into a dictionary
+/// (typically, an `HashMap`).
+pub struct KeyValueAnnotator<K, V> {
+    pub annotator: HashMap<K, V>,
+}
+
+impl<K, V> GraphAnnotator for KeyValueAnnotator<K, V>
+where
+    K: Eq + Hash,
+{
+    type Annotation = (K, V);
+    fn annotate_graph(&mut self, note: Self::Annotation) {
+        self.annotator.insert(note.0, note.1);
+    }
+}
+
+/// A `MockAnnotator` monomorphic over a graph `G`.
+pub type MockAnnotator<G> = KeyValueAnnotator<<<G as Graph>::Node as GraphObject>::Id, Osrank>;
+
+impl Default for MockAnnotator<MockNetwork> {
+    fn default() -> Self {
+        KeyValueAnnotator {
+            annotator: Default::default(),
+        }
+    }
 }

@@ -9,14 +9,14 @@ extern crate sprs;
 
 use crate::protocol_traits::graph::GraphExtras;
 use crate::protocol_traits::ledger::{LedgerView, MockLedger};
-use crate::types::mock::{Mock, MockNetwork};
-use crate::types::network::{Artifact, ArtifactType};
+use crate::types::mock::{Mock, MockAnnotator, MockNetwork};
+use crate::types::network::Artifact;
 use crate::types::walk::{RandomWalk, RandomWalks, SeedSet};
 use crate::types::Osrank;
 use core::iter::Iterator;
 use fraction::Fraction;
 use num_traits::{One, Zero};
-use oscoin_graph_api::{Direction, Edge, Graph, GraphAlgorithm, GraphObject, Id};
+use oscoin_graph_api::{Direction, Edge, Graph, GraphAlgorithm, GraphAnnotator, GraphObject, Id};
 use rand::distributions::uniform::SampleUniform;
 use rand::distributions::WeightedError;
 use rand::seq::SliceRandom;
@@ -138,15 +138,17 @@ where
 ///
 /// Given a full network `G` and an optional `SeedSet`, iterates over each
 /// edge of the network and computes the `Osrank`.
-pub fn osrank_naive<G>(
+pub fn osrank_naive<G, A>(
     seed_set: Option<&SeedSet<Id<G::Node>>>,
-    network: &mut G,
+    network: &G,
+    annotator: &mut A,
     ledger_view: &impl LedgerView,
     rng: &mut (impl Rng + SeedableRng),
-    set_osrank: &dyn Fn(&mut G::Node, Osrank) -> (),
+    to_annotation: &dyn Fn(&G::Node, Osrank) -> A::Annotation,
 ) -> Result<(), OsrankError>
 where
     G: GraphExtras + Clone,
+    A: GraphAnnotator,
     Id<G::Node>: Clone + Eq + Hash,
     <G as Graph>::Weight:
         Default + Clone + PartialOrd + for<'x> AddAssign<&'x G::Weight> + SampleUniform,
@@ -157,12 +159,24 @@ where
             let phase1 = random_walk(seed_set, &*network, ledger_view, rng)?;
             // Phase2, compute the osrank only on the NetworkView
             let phase2 = random_walk(None, &phase1.network_view, ledger_view, rng)?;
-            rank_network(&phase2.walks, &mut *network, ledger_view, set_osrank)
+            rank_network(
+                &phase2.walks,
+                &*network,
+                ledger_view,
+                annotator,
+                to_annotation,
+            )
         }
         None => {
             // Compute osrank on the full NetworkView
             let create_walks = random_walk(None, &*network, ledger_view, rng)?;
-            rank_network(&create_walks.walks, &mut *network, ledger_view, set_osrank)
+            rank_network(
+                &create_walks.walks,
+                &*network,
+                ledger_view,
+                annotator,
+                to_annotation,
+            )
         }
     }
 }
@@ -203,22 +217,23 @@ where
 }
 
 /// Assigns an `Osrank` to a network `G`.
-pub fn rank_network<'a, L, G: 'a>(
+pub fn rank_network<'a, L, G: 'a, A>(
     random_walks: &RandomWalks<Id<G::Node>>,
-    network_view: &'a mut G,
+    network_view: &'a G,
     ledger_view: &L,
-    set_osrank: &dyn Fn(&mut G::Node, Osrank) -> (),
+    annotator: &mut A,
+    to_annotation: &dyn Fn(&G::Node, Osrank) -> A::Annotation,
 ) -> Result<(), OsrankError>
 where
     L: LedgerView,
     G: GraphExtras,
+    A: GraphAnnotator,
     <G::Node as GraphObject>::Id: Eq + Clone + Hash,
 {
-    for node in network_view.nodes_mut() {
-        set_osrank(
-            node,
-            rank_node::<L, G>(&random_walks, node.id().clone(), ledger_view),
-        );
+    for node in network_view.nodes() {
+        let rank = rank_node::<L, G>(&random_walks, node.id().clone(), ledger_view);
+        let ann = to_annotation(&node, rank);
+        annotator.annotate_graph(ann);
     }
     Ok(())
 }
@@ -238,58 +253,55 @@ where
 /// newtype PhantomData a = PhantomData
 /// ```
 ///
-pub struct OsrankNaiveAlgorithm<'a, G: 'a, L> {
+pub struct OsrankNaiveAlgorithm<'a, G: 'a, L, A: 'a> {
     graph: PhantomData<G>,
     ledger: PhantomData<L>,
     ty: PhantomData<&'a ()>,
+    annotator: PhantomData<A>,
 }
 
-impl<'a, G, L> Default for OsrankNaiveAlgorithm<'a, G, L> {
+impl<'a, G, L, A> Default for OsrankNaiveAlgorithm<'a, G, L, A> {
     fn default() -> Self {
         OsrankNaiveAlgorithm {
             graph: PhantomData,
             ledger: PhantomData,
             ty: PhantomData,
+            annotator: PhantomData,
         }
     }
 }
 
 /// The `Context` that the osrank naive _mock_ algorithm will need.
-pub struct OsrankNaiveMockContext<'a, G = MockNetwork>
+pub struct OsrankNaiveMockContext<'a, A, G = MockNetwork>
 where
     G: Graph,
+    A: GraphAnnotator,
 {
     /// The optional `SeetSet` to use.
     pub seed_set: Option<&'a SeedSet<Id<G::Node>>>,
     /// The `LedgerView` for this context, i.e. a `MockLedger`.
     pub ledger_view: MockLedger,
-    /// The `set_osrank` function is a "setter" function that given a
-    /// generic `Node` "knows" what to do with the input `Osrank`. This
-    /// function is necessary to bridge the gap between the algorithm being
-    /// written in a totally generic way and `GraphObject`'s nodes not exposing
-    /// a "set_osrank" function directly. Therefore we need some setter function
-    /// which can interpret the `Osrank` and manipulate correctly the input
-    /// `G::Node`.
-    pub set_osrank: &'a (dyn Fn(&mut G::Node, Osrank) -> ()),
+    /// The `to_annotation` function is a "getter" function that given a
+    /// generic `Node` "knows" how to extract an annotation out of an `Osrank`.
+    /// This function is necessary to bridge the gap between the algorithm being
+    /// written in a totally generic way and the need to convert from a
+    /// fraction-like `Osrank` into an `A::Annotation`.
+    pub to_annotation: &'a (dyn Fn(&G::Node, Osrank) -> A::Annotation),
 }
 
-impl<'a> Default for OsrankNaiveMockContext<'a, MockNetwork> {
+impl<'a> Default for OsrankNaiveMockContext<'a, MockAnnotator<MockNetwork>, MockNetwork> {
     fn default() -> Self {
         OsrankNaiveMockContext {
             seed_set: None,
             ledger_view: MockLedger::default(),
-            set_osrank: &mock_network_set_osrank,
+            to_annotation: &mock_network_to_annotation,
         }
     }
 }
 
-fn mock_network_set_osrank(node: &mut Artifact<String>, rank: Osrank) {
-    let new_data = match node.data() {
-        ArtifactType::Project { osrank: _ } => ArtifactType::Project { osrank: rank },
-        ArtifactType::Account { osrank: _ } => ArtifactType::Account { osrank: rank },
-    };
-
-    *node.data_mut() = new_data;
+fn mock_network_to_annotation(node: &Artifact<String>, rank: Osrank) -> (String, Osrank) {
+    let artifact_id = node.id().clone();
+    (artifact_id, rank)
 }
 
 /// A *mock* implementation for the `OsrankNaiveAlgorithm`, using the `Mock`
@@ -309,33 +321,37 @@ fn mock_network_set_osrank(node: &mut Artifact<String>, rank: Osrank) {
 /// *real* algorithm, using *real* data. This is why the `Mock` wrapper is so
 /// handy: `Mock a` is still isomorphic to `a`, but allows us to
 /// define otherwise-conflicting instances.
-impl<'a, G, L> GraphAlgorithm<G> for Mock<OsrankNaiveAlgorithm<'a, G, L>>
+impl<'a, G, L, A> GraphAlgorithm<G, A> for Mock<OsrankNaiveAlgorithm<'a, G, L, A>>
 where
     G: GraphExtras + Clone,
     L: LedgerView,
     Id<G::Node>: Clone + Eq + Hash,
     <G as Graph>::Weight:
         Default + Clone + PartialOrd + for<'x> AddAssign<&'x G::Weight> + SampleUniform,
-    OsrankNaiveMockContext<'a, G>: Default,
+    OsrankNaiveMockContext<'a, A, G>: Default,
+    A: GraphAnnotator,
 {
     type Output = ();
-    type Context = OsrankNaiveMockContext<'a, G>;
+    type Context = OsrankNaiveMockContext<'a, A, G>;
     type Error = OsrankError;
     type RngSeed = [u8; 16];
+    type Annotation = <A as GraphAnnotator>::Annotation;
 
     fn execute(
         &self,
         ctx: &mut Self::Context,
-        graph: &mut G,
+        graph: &G,
+        annotator: &mut A,
         initial_seed: <XorShiftRng as SeedableRng>::Seed,
     ) -> Result<Self::Output, Self::Error> {
         let mut rng = <XorShiftRng as SeedableRng>::from_seed(initial_seed);
         osrank_naive(
             ctx.seed_set,
             graph,
+            annotator,
             &ctx.ledger_view,
             &mut rng,
-            &ctx.set_osrank,
+            &ctx.to_annotation,
         )
     }
 }
@@ -351,34 +367,40 @@ mod tests {
 
     use super::*;
     use crate::protocol_traits::ledger::MockLedger;
-    use crate::types::mock::{Mock, MockNetwork};
+    use crate::types::mock::{Mock, MockAnnotator, MockNetwork};
     use crate::types::network::{ArtifactType, DependencyType, Network};
     use crate::types::Weight;
     use fraction::ToPrimitive;
     use num_traits::Zero;
-    use oscoin_graph_api::{Graph, GraphAlgorithm, GraphWriter};
+    use oscoin_graph_api::{GraphAlgorithm, GraphWriter};
     use quickcheck::{quickcheck, TestResult};
 
     // Test that our osrank algorithm yield a probability distribution,
     // i.e. the sum of all the ranks equals 1.0 (modulo some rounding error)
-    fn prop_osrank_is_approx_probability_distribution(mut graph: MockNetwork) -> TestResult {
+    fn prop_osrank_is_approx_probability_distribution(graph: MockNetwork) -> TestResult {
         if graph.is_empty() {
             return TestResult::discard();
         }
 
         let initial_seed = [0; 16];
 
-        let algo: Mock<OsrankNaiveAlgorithm<MockNetwork, MockLedger>> = Mock {
-            unmock: OsrankNaiveAlgorithm::default(),
-        };
+        let algo: Mock<OsrankNaiveAlgorithm<MockNetwork, MockLedger, MockAnnotator<MockNetwork>>> =
+            Mock {
+                unmock: OsrankNaiveAlgorithm::default(),
+            };
         let mut ctx = OsrankNaiveMockContext::default();
+        let mut annotator: MockAnnotator<MockNetwork> = Default::default();
 
-        assert_eq!(algo.execute(&mut ctx, &mut graph, initial_seed), Ok(()));
+        assert_eq!(
+            algo.execute(&mut ctx, &graph, &mut annotator, initial_seed),
+            Ok(())
+        );
 
-        let rank_f64 = graph
-            .nodes()
-            .fold(Osrank::zero(), |mut acc, node| {
-                acc += node.data().get_osrank();
+        let rank_f64 = annotator
+            .annotator
+            .values()
+            .fold(Osrank::zero(), |mut acc, value| {
+                acc += *value;
                 acc
             })
             .to_f64()
@@ -396,35 +418,41 @@ mod tests {
 
     // Test that given the same initial seed, two osrank algorithms yields
     // exactly the same result.
-    fn prop_osrank_is_deterministic(mut graph: MockNetwork, entropy: Vec<u8>) -> TestResult {
+    fn prop_osrank_is_deterministic(graph: MockNetwork, entropy: Vec<u8>) -> TestResult {
         if graph.is_empty() || entropy.len() < 16 {
             return TestResult::discard();
         }
 
         let initial_seed: &[u8; 16] = array_ref!(entropy.as_slice(), 0, 16);
 
-        let algo: Mock<OsrankNaiveAlgorithm<MockNetwork, MockLedger>> = Mock {
-            unmock: OsrankNaiveAlgorithm::default(),
-        };
+        let algo: Mock<OsrankNaiveAlgorithm<MockNetwork, MockLedger, MockAnnotator<MockNetwork>>> =
+            Mock {
+                unmock: OsrankNaiveAlgorithm::default(),
+            };
 
         let mut ctx1 = OsrankNaiveMockContext::default();
         let mut ctx2 = OsrankNaiveMockContext::default();
-        let mut second_graph = graph.clone();
+        let mut annotator1: MockAnnotator<MockNetwork> = Default::default();
+        let mut annotator2: MockAnnotator<MockNetwork> = Default::default();
 
-        let first_run = algo.execute(&mut ctx1, &mut graph, *initial_seed);
-        let second_run = algo.execute(&mut ctx2, &mut second_graph, *initial_seed);
+        let first_run = algo.execute(&mut ctx1, &graph, &mut annotator1, *initial_seed);
+        let second_run = algo.execute(&mut ctx2, &graph, &mut annotator2, *initial_seed);
 
         assert_eq!(first_run, second_run);
 
-        let first_ranks = graph
-            .nodes()
-            .map(|node| node.data().get_osrank())
-            .collect::<Vec<Osrank>>();
+        let mut first_ranks = annotator1
+            .annotator
+            .iter()
+            .map(|(nid, rank)| ((*nid).clone(), *rank))
+            .collect::<Vec<(String, Osrank)>>();
+        first_ranks.sort_by(|a, b| a.0.cmp(&b.0)); // Compare by Ids.
 
-        let second_ranks = second_graph
-            .nodes()
-            .map(|node| node.data().get_osrank())
-            .collect::<Vec<Osrank>>();
+        let mut second_ranks = annotator2
+            .annotator
+            .iter()
+            .map(|(nid, rank)| ((*nid).clone(), *rank))
+            .collect::<Vec<(String, Osrank)>>();
+        second_ranks.sort_by(|a, b| a.0.cmp(&b.0)); // Compare by Ids.
 
         TestResult::from_bool(first_ranks == second_ranks)
     }
@@ -487,28 +515,46 @@ mod tests {
         // by who calls `.execute`, probably the ledger/protocol.
         let initial_seed = [0; 16];
 
-        let algo: Mock<OsrankNaiveAlgorithm<MockNetwork, MockLedger>> = Mock {
-            unmock: OsrankNaiveAlgorithm::default(),
-        };
+        let algo: Mock<OsrankNaiveAlgorithm<MockNetwork, MockLedger, MockAnnotator<MockNetwork>>> =
+            Mock {
+                unmock: OsrankNaiveAlgorithm::default(),
+            };
 
         let mut ctx = OsrankNaiveMockContext::default();
         ctx.seed_set = Some(&seed_set);
 
-        assert_eq!(algo.execute(&mut ctx, &mut network, initial_seed), Ok(()));
+        let mut annotator: MockAnnotator<MockNetwork> = Default::default();
 
         assert_eq!(
-            network.nodes().fold(Vec::new(), |mut ranks, node| {
-                ranks.push(format!("{}", *node));
+            algo.execute(&mut ctx, &network, &mut annotator, initial_seed),
+            Ok(())
+        );
+
+        // We need to sort the ranks because the order of the elements returned
+        // by the `HashMap::iter` is not predictable.
+        let mut expected = annotator
+            .annotator
+            .iter()
+            .fold(Vec::new(), |mut ranks, info| {
+                ranks.push(format!(
+                    "id: {} osrank: {}",
+                    info.0,
+                    info.1.to_f64().unwrap()
+                ));
                 ranks
-            }),
+            });
+        expected.sort();
+
+        assert_eq!(
+            expected,
             vec![
-                "id: p1 osrank: 0.1075",
-                "id: p2 osrank: 0.2325",
-                "id: p3 osrank: 0.2125",
                 "id: a1 osrank: 0.0575",
                 "id: a2 osrank: 0.2675",
                 "id: a3 osrank: 0.065",
-                "id: isle osrank: 0"
+                "id: isle osrank: 0",
+                "id: p1 osrank: 0.1075",
+                "id: p2 osrank: 0.2325",
+                "id: p3 osrank: 0.2125",
             ]
         );
     }

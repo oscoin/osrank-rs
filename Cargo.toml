@@ -65,7 +65,7 @@ rand = "=0.7"
 rand_xorshift = "=0.2.0"
 
 #Doman-specific crates
-oscoin-graph-api = { git = "https://github.com/oscoin/graph-api.git", rev = "4940470811a6f6a3cac0d2c75349f02e8f7d7b0d" }
+oscoin-graph-api = { git = "https://github.com/oscoin/graph-api.git", rev = "e2ee956a94a4ba7db4ca213f2fa27c2c89d9e2ad" }
 
 # Binary-only dependencies
 # See: https://stackoverflow.com/questions/35711044/how-can-i-specify-binary-only-dependencies
