@@ -57,7 +57,7 @@ fn bench_random_walk_on_csv(c: &mut Criterion) {
 fn bench_rank_network(c: &mut Criterion) {
     let mut network = construct_network(1_000, 10_000);
 
-    let (_algo, mut ctx) = construct_osrank_naive_algorithm();
+    let (_algo, mut annotator, mut ctx) = construct_osrank_naive_algorithm();
     ctx.ledger_view.set_random_walks_num(1);
 
     let walks = random_walk::<MockLedger, MockNetwork, XorShiftRng>(
@@ -77,7 +77,15 @@ fn bench_rank_network(c: &mut Criterion) {
     c.bench(
         &info,
         Benchmark::new("sample size 10", move |b| {
-            b.iter(|| rank_network(&walks, &mut network, &ctx.ledger_view, &ctx.set_osrank))
+            b.iter(|| {
+                rank_network(
+                    &walks,
+                    &mut network,
+                    &ctx.ledger_view,
+                    &mut annotator,
+                    &ctx.to_annotation,
+                )
+            })
         })
         .sample_size(10),
     );
