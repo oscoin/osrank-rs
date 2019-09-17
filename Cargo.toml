@@ -11,24 +11,29 @@ assets = "data"
 
 name = "osrank"
 path = "src/lib.rs"
+bench = false # https://bheisler.github.io/criterion.rs/book/faq.html#cargo-bench-gives-unrecognized-option-errors-for-valid-command-line-options
 
 [[bin]]
 name = "osrank-test"
 path = "bin/main.rs"
+bench = false
 
 [[bin]]
 name = "osrank-source-dependencies"
 path = "bin/source_dependencies.rs"
+bench = false
 required-features = ["build-binary"]
 
 [[bin]]
 name = "osrank-source-contributions"
 path = "bin/source_contributions.rs"
+bench = false
 required-features = ["build-binary"]
 
 [[bin]]
 name = "osrank-adjacency-matrix"
 path = "bin/adjacency_matrix.rs"
+bench = false
 required-features = ["build-binary"]
 
 [features]
@@ -76,5 +81,11 @@ criterion = "0.3.0"
 arrayref = "0.3.5"
 
 [[bench]]
-name = "osrank_naive"
+name = "osrank_naive_development"
+path = "benches/osrank_naive_development.rs"
+harness = false
+
+[[bench]]
+name = "osrank_naive_nightly"
+path = "benches/osrank_naive_nightly.rs"
 harness = false
