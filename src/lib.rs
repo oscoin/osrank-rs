@@ -12,6 +12,7 @@ extern crate arrayref;
 
 pub mod adjacency;
 pub mod algorithm;
+pub mod benchmarks;
 pub mod collections;
 pub mod exporters;
 pub mod importers;
