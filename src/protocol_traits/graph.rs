@@ -7,7 +7,7 @@ extern crate rand;
 
 /// This is a compatibility-shim trait for things that the "official"
 /// GraphAPI trait(s) don't give us for free.
-pub trait GraphExtras: oscoin::Graph + oscoin::GraphDataWriter + oscoin::GraphWriter {
+pub trait GraphExtras: oscoin::Graph {
     fn lookup_node_metadata(
         &self,
         node_id: &oscoin::Id<Self::Node>,

@@ -9,7 +9,7 @@ extern crate rand_xorshift;
 use crate::algorithm::{random_walk, OsrankNaiveAlgorithm, OsrankNaiveMockContext};
 use crate::importers::csv::import_network;
 use crate::protocol_traits::ledger::{LedgerView, MockLedger};
-use crate::types::mock::{Mock, MockNetwork};
+use crate::types::mock::{Mock, MockAnnotator, MockNetwork};
 use crate::types::network::{ArtifactType, DependencyType, Network};
 use crate::types::Weight;
 use itertools::Itertools;
@@ -32,16 +32,18 @@ pub fn dev(name: &str) -> String {
 }
 
 pub fn construct_osrank_naive_algorithm<'a>() -> (
-    Mock<OsrankNaiveAlgorithm<'a, MockNetwork, MockLedger>>,
-    OsrankNaiveMockContext<'a, MockNetwork>,
+    Mock<OsrankNaiveAlgorithm<'a, MockNetwork, MockLedger, MockAnnotator<MockNetwork>>>,
+    MockAnnotator<MockNetwork>,
+    OsrankNaiveMockContext<'a, MockAnnotator<MockNetwork>, MockNetwork>,
 ) {
-    let algo: Mock<OsrankNaiveAlgorithm<MockNetwork, MockLedger>> = Mock {
-        unmock: OsrankNaiveAlgorithm::default(),
-    };
+    let algo: Mock<OsrankNaiveAlgorithm<MockNetwork, MockLedger, MockAnnotator<MockNetwork>>> =
+        Mock {
+            unmock: OsrankNaiveAlgorithm::default(),
+        };
 
     let ctx = OsrankNaiveMockContext::default();
 
-    (algo, ctx)
+    (algo, Default::default(), ctx)
 }
 
 pub fn construct_network_small() -> MockNetwork {
@@ -122,10 +124,11 @@ pub fn construct_network(meta_num: usize, contributions_num: usize) -> MockNetwo
     .unwrap()
 }
 
-pub fn run_osrank_naive(mut network: &mut MockNetwork, iter: u32, initial_seed: [u8; 16]) {
-    let (algo, mut ctx) = construct_osrank_naive_algorithm();
+pub fn run_osrank_naive(network: &MockNetwork, iter: u32, initial_seed: [u8; 16]) {
+    let (algo, mut annotator, mut ctx) = construct_osrank_naive_algorithm();
     ctx.ledger_view.set_random_walks_num(iter);
-    algo.execute(&mut ctx, &mut network, initial_seed).unwrap();
+    algo.execute(&mut ctx, &network, &mut annotator, initial_seed)
+        .unwrap();
 }
 
 pub fn run_random_walk(network: &MockNetwork, iter: u32, initial_seed: [u8; 16]) {
