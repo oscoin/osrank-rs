@@ -16,7 +16,7 @@ use osrank::adjacency::new_network_matrix;
 use osrank::collections::{Rank, WithLabels};
 use osrank::importers::csv::{
     new_contribution_adjacency_matrix, new_dependency_adjacency_matrix, ContribRow,
-    ContributionsMetadata, CsvImportError, DepMetaRow, DependenciesMetadata,
+    ContributionsMetadata, CsvImportError, DepMetaRow, DependenciesMetadata, DisplayAsF64,
 };
 use osrank::linalg::{transpose_storage, DenseMatrix, SparseMatrix};
 use osrank::types::{HyperParams, Weight};
@@ -28,26 +28,6 @@ use num_traits::{Num, One, Signed, Zero};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::rc::Rc;
-
-//
-// Utility Traits
-//
-
-pub trait DisplayAsF64 {
-    fn to_f64(self) -> f64;
-}
-
-impl DisplayAsF64 for f64 {
-    fn to_f64(self: f64) -> f64 {
-        self
-    }
-}
-
-impl DisplayAsF64 for Weight {
-    fn to_f64(self: Weight) -> f64 {
-        self.as_f64().unwrap()
-    }
-}
 
 //
 // Functions
@@ -147,41 +127,6 @@ where
     }
 
     dense
-}
-
-pub fn debug_sparse_matrix_to_csv<N>(
-    matrix: &CsMat<N>,
-    out_path: &str,
-) -> Result<(), CsvImportError>
-where
-    N: DisplayAsF64 + Zero + Clone + Copy,
-{
-    debug_dense_matrix_to_csv(&matrix.to_dense(), out_path)
-}
-
-pub fn debug_dense_matrix_to_csv<N>(
-    matrix: &DenseMatrix<N>,
-    out_path: &str,
-) -> Result<(), CsvImportError>
-where
-    N: DisplayAsF64 + Zero + Clone + Copy,
-{
-    let mut output_csv = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(out_path)?;
-
-    for row in matrix.genrows() {
-        if let Some((last, els)) = row.as_slice().and_then(|e| e.split_last()) {
-            for cell in els {
-                output_csv.write_all(format!("{},", cell.to_f64()).as_str().as_bytes())?;
-            }
-            output_csv.write_all(format!("{}", last.to_f64()).as_str().as_bytes())?;
-        }
-        output_csv.write_all(b"\n")?;
-    }
-
-    Ok(())
 }
 
 fn debug_pagerank_to_csv(rank: &Rank<f64>, out_path: &str) -> Result<(), CsvImportError> {
