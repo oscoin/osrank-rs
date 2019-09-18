@@ -15,8 +15,7 @@ fn bench_nightly_osrank_naive(c: &mut Criterion) {
     let mut group = c.benchmark_group(&nightly("Increasing node count"));
     group.sample_size(10);
 
-    // for iter in &[1, 10, 100, 1_000] {
-    for iter in &[1, 10] {
+    for iter in &[1, 10, 100] {
         for count in &[1_001, 2_501, 5_001, 7_501, 10_001, 15_001] {
             let mut network = construct_network(*count as usize, 0);
             let nodes = &network.node_count();
@@ -25,15 +24,17 @@ fn bench_nightly_osrank_naive(c: &mut Criterion) {
                 move |b| b.iter(|| run_osrank_naive(&mut network, *iter as u32, [0; 32])),
             );
         }
-
-        // for count in &[5_000, 10_000, 19_370] {
-        //     let mut network = construct_network(16_220, *count as usize);
-        //     let nodes = &network.node_count();
-        //     group.bench_function(
-        //         BenchmarkId::new(format!("Iter {}", &iter), nodes),
-        //         move |b| b.iter(|| run_osrank_naive(&mut network, *iter as u32, [0; 32])),
-        //     );
-        // }
+    }
+    // only increase node count further for faster benchmarks
+    for iter2 in &[1, 10] {
+        for count in &[5_000, 10_000, 19_370] {
+            let mut network = construct_network(16_220, *count as usize);
+            let nodes = &network.node_count();
+            group.bench_function(
+                BenchmarkId::new(format!("Iter {}", &iter2), nodes),
+                move |b| b.iter(|| run_osrank_naive(&mut network, *iter2 as u32, [0; 32])),
+            );
+        }
     }
     group.finish();
 }
