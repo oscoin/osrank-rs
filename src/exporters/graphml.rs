@@ -1,13 +1,16 @@
 #![allow(unknown_lints)]
 #![warn(clippy::all)]
 
+use crate::types::mock::KeyValueAnnotator;
 use crate::types::network::ArtifactType;
+use crate::types::Osrank;
 use oscoin_graph_api::{Direction, Edge, EdgeRef, Graph, GraphObject};
 
 use fraction::ToPrimitive;
 use num_traits::Zero;
 use std::convert::TryInto;
 use std::fs::{File, OpenOptions};
+use std::hash::Hash;
 use std::io::Write;
 use std::marker::PhantomData;
 use std::path::Path;
@@ -205,14 +208,24 @@ where
 }
 
 /// Converts a `Graph::Node` into some GRAPHML tags.
-fn write_node<N>(node: &N, out: &mut File) -> Result<(), ExportError>
+fn write_node<N, V>(
+    node: &N,
+    annotator: &KeyValueAnnotator<<N as GraphObject>::Id, V>,
+    out: &mut File,
+) -> Result<(), ExportError>
 where
     N: GraphObject,
+    V: Into<Rank<f64>> + Zero + Clone,
     <N as GraphObject>::Data: Clone + Into<NodeType> + Into<Rank<f64>>,
-    <N as GraphObject>::Id: IntoGraphMlXml + Clone + TryInto<String>,
+    <N as GraphObject>::Id: IntoGraphMlXml + Clone + TryInto<String> + Eq + Hash,
 {
     let data: <N as GraphObject>::Data = (*node).data().clone();
-    let rank: Rank<f64> = data.clone().into();
+    let rank: Rank<f64> = annotator
+        .annotator
+        .get(&node.id())
+        .and_then(|r| Some((*r).clone()))
+        .unwrap_or_else(V::zero)
+        .into();
     let node_type: NodeType = data.clone().into();
     let lbl = node
         .id()
@@ -273,11 +286,16 @@ where
 }
 
 /// Converts the `Graph` into some GRAPHML tags.
-fn write_graph<G>(g: &G, out: &mut File) -> Result<(), ExportError>
+fn write_graph<G, V>(
+    g: &G,
+    annotator: KeyValueAnnotator<<G::Node as GraphObject>::Id, V>,
+    out: &mut File,
+) -> Result<(), ExportError>
 where
     G: Graph,
+    V: Into<Rank<f64>> + Zero + Clone,
     <G::Node as GraphObject>::Data: Clone + Into<NodeType> + Into<Rank<f64>>,
-    <G::Node as GraphObject>::Id: IntoGraphMlXml + Clone + TryInto<String>,
+    <G::Node as GraphObject>::Id: IntoGraphMlXml + Clone + TryInto<String> + Eq + Hash,
     <G::Edge as GraphObject>::Id: IntoGraphMlXml + Clone,
     <G as Graph>::Weight: IntoGraphMlXml + Zero,
 {
@@ -286,7 +304,7 @@ where
     out.write_all(b"<graph id=\"osrank\" edgedefault=\"directed\">\n")?;
 
     for n in g.nodes() {
-        write_node(n, out)?;
+        write_node(n, &annotator, out)?;
         out.write_all(b"\n")?;
         all_edges.extend(g.edges_directed(n.id(), Direction::Outgoing))
     }
@@ -307,18 +325,23 @@ where
 /// like [Gephi](https://gephi.org/).
 /// For a more exhaustive explanation of GraphML, refers to the
 /// [official documentation](http://graphml.graphdrawing.org/).
-pub fn export_graph<G>(g: &G, out: &Path) -> Result<(), ExportError>
+pub fn export_graph<G, V>(
+    g: &G,
+    annotator: KeyValueAnnotator<<G::Node as GraphObject>::Id, V>,
+    out: &Path,
+) -> Result<(), ExportError>
 where
     G: Graph,
+    V: Into<Rank<f64>> + Zero + Clone,
     <G::Node as GraphObject>::Data: Clone + Into<NodeType> + Into<Rank<f64>>,
-    <G::Node as GraphObject>::Id: IntoGraphMlXml + Clone + TryInto<String>,
+    <G::Node as GraphObject>::Id: IntoGraphMlXml + Clone + TryInto<String> + Eq + Hash,
     <G::Edge as GraphObject>::Id: IntoGraphMlXml + Clone,
     <G as Graph>::Weight: IntoGraphMlXml + Zero,
 {
     let mut out_file = OpenOptions::new().write(true).create_new(true).open(out)?;
 
     out_file.write_all(GRAPHML_META.as_bytes())?;
-    write_graph(g, &mut out_file)?;
+    write_graph(g, annotator, &mut out_file)?;
     out_file.write_all(GRAPHML_FOOTER.as_bytes())?;
 
     Ok(())
@@ -339,6 +362,15 @@ impl std::convert::From<ArtifactType> for Rank<f64> where {
     fn from(atype: ArtifactType) -> Self {
         Rank {
             rank: atype.get_osrank().to_f64().unwrap_or(0.0),
+            from_type: PhantomData,
+        }
+    }
+}
+
+impl std::convert::From<Osrank> for Rank<f64> where {
+    fn from(r: Osrank) -> Self {
+        Rank {
+            rank: r.to_f64().unwrap_or(0.0),
             from_type: PhantomData,
         }
     }
