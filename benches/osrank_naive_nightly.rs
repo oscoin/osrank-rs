@@ -2,7 +2,7 @@
 extern crate criterion;
 extern crate oscoin_graph_api;
 extern crate rand;
-extern crate rand_xorshift;
+extern crate rand_xoshiro;
 
 use criterion::*;
 

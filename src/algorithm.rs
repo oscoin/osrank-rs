@@ -416,7 +416,7 @@ mod tests {
     extern crate oscoin_graph_api;
     extern crate quickcheck;
     extern crate rand;
-    extern crate rand_xorshift;
+    extern crate rand_xoshiro;
 
     use super::*;
     use crate::protocol_traits::ledger::MockLedger;
