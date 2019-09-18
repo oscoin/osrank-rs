@@ -48,7 +48,7 @@ impl From<rand::Error> for OsrankError {
 /// The output from a random walk.
 pub struct WalkResult<G, I>
 where
-    I: Eq + Hash,
+    I: Eq + Hash + Sync + Send,
 {
     network_view: G,
     pub walks: RandomWalks<I>,
@@ -208,8 +208,10 @@ where
         Some(_) => {
             // Phase1, rank the network and produce a NetworkView.
             let phase1 = random_walk(seed_set, &*network, ledger_view, rng)?;
+
             // Phase2, compute the osrank only on the NetworkView
             let phase2 = random_walk(None, &phase1.network_view, ledger_view, rng)?;
+
             rank_network(
                 &phase2.walks,
                 &*network,
@@ -241,7 +243,7 @@ fn rank_node<L, G>(
 where
     L: LedgerView,
     G: GraphExtras,
-    <G::Node as GraphObject>::Id: Eq + Clone + Hash,
+    <G::Node as GraphObject>::Id: Eq + Clone + Hash + Sync + Send,
 {
     let total_walks = random_walks.len();
     let node_visits = random_walks.count_visits(&node_id);
@@ -279,7 +281,7 @@ where
     L: LedgerView,
     G: GraphExtras,
     A: GraphAnnotator,
-    <G::Node as GraphObject>::Id: Eq + Clone + Hash,
+    <G::Node as GraphObject>::Id: Eq + Clone + Hash + Sync + Send,
 {
     for node in network_view.nodes() {
         let rank = rank_node::<L, G>(&random_walks, node.id().clone(), ledger_view);

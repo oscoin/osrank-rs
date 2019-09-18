@@ -5,15 +5,17 @@ extern crate fnv;
 extern crate fraction;
 extern crate num_traits;
 extern crate petgraph;
+extern crate rayon;
 
 use fnv::FnvHashMap;
 
+use rayon::prelude::*;
 use std::hash::Hash;
 
 #[derive(Debug, Default)]
 pub struct RandomWalks<Id>
 where
-    Id: Hash + Eq,
+    Id: Hash + Eq + Sync + Send,
 {
     /// A collection of random walks.
     random_walks: Vec<RandomWalk<Id>>,
@@ -21,7 +23,7 @@ where
 
 impl<Id> RandomWalks<Id>
 where
-    Id: Clone + Eq + Hash,
+    Id: Clone + Eq + Hash + Sync + Send,
 {
     pub fn new() -> Self {
         RandomWalks {
@@ -59,7 +61,7 @@ where
     /// ```
     pub fn count_visits(&self, idx: &Id) -> Count {
         self.random_walks
-            .iter()
+            .par_iter()
             .map(|rw| rw.count_visits(idx))
             .sum()
     }
@@ -100,7 +102,7 @@ type Count = usize;
 /// that element.
 pub struct RandomWalk<Id>
 where
-    Id: Hash + Eq,
+    Id: Hash + Eq + Sync + Send,
 {
     random_walk_source: Id,
     random_walk_visits: FnvHashMap<Id, Count>,
@@ -108,7 +110,7 @@ where
 
 impl<Id> RandomWalk<Id>
 where
-    Id: Clone + Eq + Hash,
+    Id: Clone + Eq + Hash + Sync + Send,
 {
     /// Creates a new `RandomWalk` by passing the source (i.e. beginning)
     /// of the walk. Note that this also counts as a visit, i.e. it's not

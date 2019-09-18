@@ -4,7 +4,7 @@
 extern crate itertools;
 extern crate oscoin_graph_api;
 extern crate rand;
-extern crate rand_xorshift;
+extern crate rand_xoshiro;
 
 use crate::algorithm::{random_walk, OsrankNaiveAlgorithm, OsrankNaiveMockContext};
 use crate::importers::csv::import_network;
@@ -139,7 +139,7 @@ pub fn run_random_walk(network: &MockNetwork, iter: u32, initial_seed: [u8; 32])
         None,
         &network,
         &mock_ledger,
-        &mut Xoshiro256StarStar::from_seed(initial_seed),
+        &Xoshiro256StarStar::from_seed(initial_seed),
     )
     .unwrap();
 }
