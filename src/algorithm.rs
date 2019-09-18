@@ -5,6 +5,7 @@ extern crate ndarray;
 extern crate oscoin_graph_api;
 extern crate petgraph;
 extern crate rand;
+extern crate rayon;
 extern crate sprs;
 
 use crate::protocol_traits::graph::GraphExtras;
@@ -21,7 +22,9 @@ use rand::distributions::uniform::SampleUniform;
 use rand::distributions::WeightedError;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
-use rand_xorshift::XorShiftRng;
+use rand_xoshiro::Xoshiro256StarStar;
+use rayon::prelude::*;
+
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::AddAssign;
@@ -32,6 +35,13 @@ pub enum OsrankError {
     /// Generic, catch-all error for things which can go wrong during the
     /// algorithm.
     UnknownError,
+    RngFailedToSplit(String),
+}
+
+impl From<rand::Error> for OsrankError {
+    fn from(err: rand::Error) -> OsrankError {
+        OsrankError::RngFailedToSplit(format!("{}", err))
+    }
 }
 
 #[derive(Debug)]
@@ -45,47 +55,82 @@ where
 }
 
 fn walks<'a, L, G: 'a, RNG>(
-    starting_nodes: impl Iterator<Item = &'a Id<G::Node>>,
+    starting_nodes: impl IntoParallelIterator<Item = &'a Id<G::Node>>,
     network: &G,
     ledger_view: &L,
-    rng: &mut RNG,
-) -> RandomWalks<Id<G::Node>>
+    rng: &RNG,
+) -> Result<RandomWalks<Id<G::Node>>, OsrankError>
 where
-    L: LedgerView,
-    G: GraphExtras,
-    Id<G::Node>: Clone + Eq + Hash,
-    RNG: Rng + SeedableRng,
+    L: LedgerView + Send + Sync,
+    G: GraphExtras + Send + Sync,
+    Id<G::Node>: Clone + Eq + Hash + Send + Sync,
+    RNG: Rng + SeedableRng + Clone + Send + Sync,
     <G as Graph>::Weight:
         Default + Clone + PartialOrd + for<'x> AddAssign<&'x G::Weight> + SampleUniform,
 {
-    let mut walks = RandomWalks::new();
+    let res = starting_nodes
+        .into_par_iter()
+        .map(move |i| {
+            let mut thread_walks = RandomWalks::new();
 
-    for i in starting_nodes {
-        for _ in 0..(*ledger_view.get_random_walks_num()) {
-            let mut walk = RandomWalk::new(i.clone());
-            let mut current_node = i;
-            // TODO distinguish account/project
-            // TODO Should there be a safeguard so this doesn't run forever?
-            while rng.gen::<f64>() < ledger_view.get_damping_factors().project {
-                let neighbors = network.edges_directed(&current_node, Direction::Outgoing);
-                match neighbors.choose_weighted(rng, |item| {
-                    network
-                        .get_edge(&item.id)
-                        .and_then(|m| Some(m.weight()))
-                        .unwrap()
-                }) {
-                    Ok(next_edge) => {
-                        walk.add_next(next_edge.to.clone());
-                        current_node = next_edge.to;
+            // ATTENTION: The accuracy (or lack thereof) of the final ranks
+            // depends on the goodness of the input RNG. In particular, using
+            // a poor RNG for testing might result in an osrank which is > 1.0.
+            // An example of this is the `XorShiftRng`. Quoting the documentation
+            // for `from_rng`:
+            //
+            // "The master PRNG should be at least as high quality as the child PRNGs.
+            // When seeding non-cryptographic child PRNGs, we recommend using a
+            // different algorithm for the master PRNG (ideally a CSPRNG) to avoid
+            // correlations between the child PRNGs. If this is not possible (e.g. forking using
+            // small non-crypto PRNGs) ensure that your PRNG has a good mixing function on the
+            // output or consider use of a hash function with from_seed.
+            // Note that seeding XorShiftRng from another XorShiftRng provides an extreme example
+            // of what can go wrong: the new PRNG will be a clone of the parent."
+            //
+            let mut thread_rng: RNG = SeedableRng::from_rng(rng.clone())?;
+
+            for _ in 0..(*ledger_view.get_random_walks_num()) {
+                let mut walk = RandomWalk::new(i.clone());
+                let mut current_node = i;
+                // TODO distinguish account/project
+                // TODO Should there be a safeguard so this doesn't run forever?
+                while thread_rng.gen::<f64>() < ledger_view.get_damping_factors().project {
+                    let neighbors = network.edges_directed(&current_node, Direction::Outgoing);
+                    match neighbors.choose_weighted(&mut thread_rng, |item| {
+                        network
+                            .get_edge(&item.id)
+                            .and_then(|m| Some(m.weight()))
+                            .unwrap()
+                    }) {
+                        Ok(next_edge) => {
+                            walk.add_next(next_edge.to.clone());
+                            current_node = next_edge.to;
+                        }
+                        Err(WeightedError::NoItem) => break,
+                        Err(error) => panic!("Problem with the neighbors: {:?}", error),
                     }
-                    Err(WeightedError::NoItem) => break,
-                    Err(error) => panic!("Problem with the neighbors: {:?}", error),
                 }
+                thread_walks.add_walk(walk);
             }
-            walks.add_walk(walk);
-        }
+
+            Ok(thread_walks)
+        })
+        .reduce_with(|acc, w2| match (acc, w2) {
+            (Err(e), _) => Err(e),
+            (_, Err(e)) => Err(e),
+            (Ok(mut w1), Ok(w2)) => {
+                w1.append(w2);
+                Ok(w1)
+            }
+        });
+
+    match res {
+        None => Err(OsrankError::RngFailedToSplit(
+            "The starting_nodes were empty.".to_string(),
+        )),
+        Some(w) => w,
     }
-    walks
 }
 
 /// Performs a random walk over the input network `G`.
@@ -97,19 +142,19 @@ pub fn random_walk<L, G, RNG>(
     seed_set: Option<&SeedSet<Id<G::Node>>>,
     network: &G,
     ledger_view: &L,
-    rng: &mut RNG,
+    rng: &RNG,
 ) -> Result<WalkResult<G, <G::Node as GraphObject>::Id>, OsrankError>
 where
-    L: LedgerView,
-    G: GraphExtras + Clone,
-    Id<G::Node>: Clone + Eq + Hash,
-    RNG: Rng + SeedableRng,
+    L: LedgerView + Send + Sync,
+    G: GraphExtras + Clone + Send + Sync,
+    Id<G::Node>: Clone + Eq + Hash + Send + Sync,
+    RNG: Rng + SeedableRng + Clone + Send + Sync,
     <G as Graph>::Weight:
         Default + Clone + PartialOrd + for<'x> AddAssign<&'x G::Weight> + SampleUniform,
 {
     match seed_set {
         Some(seeds) => {
-            let walks = walks(seeds.seedset_iter(), network, ledger_view, rng);
+            let walks = walks(seeds.seedset_iter().par_bridge(), network, ledger_view, rng)?;
             let mut trusted_node_ids: Vec<&Id<G::Node>> = Vec::new();
             for node in network.nodes() {
                 if rank_node::<L, G>(&walks, node.id().clone(), ledger_view) > Osrank::zero() {
@@ -123,10 +168,16 @@ where
         }
         None => {
             let whole_network = (*network).clone(); // FIXME, terrible.
-            let all_node_ids = network.nodes().map(|n| n.id());
+            let all_node_ids: Vec<&Id<G::Node>> = network.nodes().map(|n| n.id()).collect();
+            let walks = walks(
+                all_node_ids.into_iter().par_bridge(),
+                network,
+                ledger_view,
+                rng,
+            )?;
             let res = WalkResult {
                 network_view: whole_network,
-                walks: walks(all_node_ids, network, ledger_view, rng),
+                walks,
             };
 
             Ok(res)
@@ -142,14 +193,14 @@ pub fn osrank_naive<G, A>(
     seed_set: Option<&SeedSet<Id<G::Node>>>,
     network: &G,
     annotator: &mut A,
-    ledger_view: &impl LedgerView,
-    rng: &mut (impl Rng + SeedableRng),
+    ledger_view: &(impl LedgerView + Send + Sync),
+    rng: &(impl Rng + SeedableRng + Clone + Send + Sync),
     to_annotation: &dyn Fn(&G::Node, Osrank) -> A::Annotation,
 ) -> Result<(), OsrankError>
 where
-    G: GraphExtras + Clone,
+    G: GraphExtras + Clone + Send + Sync,
     A: GraphAnnotator,
-    Id<G::Node>: Clone + Eq + Hash,
+    Id<G::Node>: Clone + Eq + Hash + Send + Sync,
     <G as Graph>::Weight:
         Default + Clone + PartialOrd + for<'x> AddAssign<&'x G::Weight> + SampleUniform,
 {
@@ -323,9 +374,9 @@ fn mock_network_to_annotation(node: &Artifact<String>, rank: Osrank) -> (String,
 /// define otherwise-conflicting instances.
 impl<'a, G, L, A> GraphAlgorithm<G, A> for Mock<OsrankNaiveAlgorithm<'a, G, L, A>>
 where
-    G: GraphExtras + Clone,
-    L: LedgerView,
-    Id<G::Node>: Clone + Eq + Hash,
+    G: GraphExtras + Clone + Send + Sync,
+    L: LedgerView + Send + Sync,
+    Id<G::Node>: Clone + Eq + Hash + Send + Sync,
     <G as Graph>::Weight:
         Default + Clone + PartialOrd + for<'x> AddAssign<&'x G::Weight> + SampleUniform,
     OsrankNaiveMockContext<'a, A, G>: Default,
@@ -334,7 +385,7 @@ where
     type Output = ();
     type Context = OsrankNaiveMockContext<'a, A, G>;
     type Error = OsrankError;
-    type RngSeed = [u8; 16];
+    type RngSeed = [u8; 32];
     type Annotation = <A as GraphAnnotator>::Annotation;
 
     fn execute(
@@ -342,15 +393,15 @@ where
         ctx: &mut Self::Context,
         graph: &G,
         annotator: &mut A,
-        initial_seed: <XorShiftRng as SeedableRng>::Seed,
+        initial_seed: <Xoshiro256StarStar as SeedableRng>::Seed,
     ) -> Result<Self::Output, Self::Error> {
-        let mut rng = <XorShiftRng as SeedableRng>::from_seed(initial_seed);
+        let rng = <Xoshiro256StarStar as SeedableRng>::from_seed(initial_seed);
         osrank_naive(
             ctx.seed_set,
             graph,
             annotator,
             &ctx.ledger_view,
-            &mut rng,
+            &rng,
             &ctx.to_annotation,
         )
     }
@@ -382,7 +433,7 @@ mod tests {
             return TestResult::discard();
         }
 
-        let initial_seed = [0; 16];
+        let initial_seed = [0; 32];
 
         let algo: Mock<OsrankNaiveAlgorithm<MockNetwork, MockLedger, MockAnnotator<MockNetwork>>> =
             Mock {
@@ -408,7 +459,7 @@ mod tests {
 
         // FIXME(adn) This is a fairly weak check, but so far it's the best
         // we can shoot for.
-        TestResult::from_bool(rank_f64 > 0.0 && rank_f64 < 1.01)
+        TestResult::from_bool(rank_f64 > 0.0 && rank_f64 <= 1.0)
     }
 
     #[test]
@@ -419,11 +470,11 @@ mod tests {
     // Test that given the same initial seed, two osrank algorithms yields
     // exactly the same result.
     fn prop_osrank_is_deterministic(graph: MockNetwork, entropy: Vec<u8>) -> TestResult {
-        if graph.is_empty() || entropy.len() < 16 {
+        if graph.is_empty() || entropy.len() < 32 {
             return TestResult::discard();
         }
 
-        let initial_seed: &[u8; 16] = array_ref!(entropy.as_slice(), 0, 16);
+        let initial_seed: &[u8; 32] = array_ref!(entropy.as_slice(), 0, 32);
 
         let algo: Mock<OsrankNaiveAlgorithm<MockNetwork, MockLedger, MockAnnotator<MockNetwork>>> =
             Mock {
@@ -513,7 +564,7 @@ mod tests {
 
         // NOTE(adn) In the "real world" the initial_seed will be provided
         // by who calls `.execute`, probably the ledger/protocol.
-        let initial_seed = [0; 16];
+        let initial_seed = [0; 32];
 
         let algo: Mock<OsrankNaiveAlgorithm<MockNetwork, MockLedger, MockAnnotator<MockNetwork>>> =
             Mock {
@@ -548,13 +599,13 @@ mod tests {
         assert_eq!(
             expected,
             vec![
-                "id: a1 osrank: 0.0575",
-                "id: a2 osrank: 0.2675",
-                "id: a3 osrank: 0.065",
+                "id: a1 osrank: 0.0725",
+                "id: a2 osrank: 0.24",
+                "id: a3 osrank: 0.05",
                 "id: isle osrank: 0",
-                "id: p1 osrank: 0.1075",
-                "id: p2 osrank: 0.2325",
-                "id: p3 osrank: 0.2125",
+                "id: p1 osrank: 0.12",
+                "id: p2 osrank: 0.205",
+                "id: p3 osrank: 0.1675",
             ]
         );
     }

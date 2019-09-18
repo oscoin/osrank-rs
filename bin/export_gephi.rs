@@ -121,7 +121,7 @@ fn main() -> Result<(), AppError> {
 
     debug!("Calculating the osrank (mock naive algorithm)...");
 
-    let initial_seed = [0; 16];
+    let initial_seed = [0; 32];
     let mut annotator: MockAnnotator<MockNetwork> = Default::default();
 
     algo.execute(&mut ctx, &mut network, &mut annotator, initial_seed)?;

@@ -16,7 +16,7 @@ use itertools::Itertools;
 use num_traits::Zero;
 use oscoin_graph_api::{GraphAlgorithm, GraphWriter};
 use rand::SeedableRng;
-use rand_xorshift::XorShiftRng;
+use rand_xoshiro::Xoshiro256StarStar;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
@@ -124,22 +124,22 @@ pub fn construct_network(meta_num: usize, contributions_num: usize) -> MockNetwo
     .unwrap()
 }
 
-pub fn run_osrank_naive(network: &MockNetwork, iter: u32, initial_seed: [u8; 16]) {
+pub fn run_osrank_naive(network: &MockNetwork, iter: u32, initial_seed: [u8; 32]) {
     let (algo, mut annotator, mut ctx) = construct_osrank_naive_algorithm();
     ctx.ledger_view.set_random_walks_num(iter);
     algo.execute(&mut ctx, &network, &mut annotator, initial_seed)
         .unwrap();
 }
 
-pub fn run_random_walk(network: &MockNetwork, iter: u32, initial_seed: [u8; 16]) {
+pub fn run_random_walk(network: &MockNetwork, iter: u32, initial_seed: [u8; 32]) {
     let mut mock_ledger = MockLedger::default();
 
     mock_ledger.set_random_walks_num(iter);
-    random_walk::<MockLedger, MockNetwork, XorShiftRng>(
+    random_walk::<MockLedger, MockNetwork, Xoshiro256StarStar>(
         None,
         &network,
         &mock_ledger,
-        &mut XorShiftRng::from_seed(initial_seed),
+        &mut Xoshiro256StarStar::from_seed(initial_seed),
     )
     .unwrap();
 }

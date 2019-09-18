@@ -52,6 +52,7 @@ derive_more = "^0.13"
 itertools = "^0.8.0"
 fnv = "^1.0.3"
 log = "0.4.0"
+rayon = "^1.2.0"
 
 # We need to lock quickcheck to the same version of rand used by this crate.
 quickcheck = "=0.9"
@@ -69,6 +70,7 @@ sprs = "^0.6"
 ndarray = "=0.12.1"
 rand = "=0.7"
 rand_xorshift = "=0.2.0"
+rand_xoshiro  = "=0.4.0"
 
 #Doman-specific crates
 oscoin-graph-api = { git = "https://github.com/oscoin/graph-api.git", rev = "c8eed614f0d8d4f0ab265416f8caf2f4c60a1560" }
