@@ -8,16 +8,18 @@ extern crate serde;
 extern crate sprs;
 
 use crate::adjacency::new_network_matrix;
-use crate::linalg::SparseMatrix;
+use crate::linalg::{DenseMatrix, SparseMatrix};
 use crate::protocol_traits::ledger::LedgerView;
 use crate::types::network::{Artifact, ArtifactType, Dependency, DependencyType};
+use crate::types::Weight;
 use core::fmt;
 use num_traits::{Num, One, Zero};
 use oscoin_graph_api::{Graph, GraphWriter};
 use serde::Deserialize;
 use sprs::{CsMat, TriMat, TriMatBase};
 use std::collections::{HashMap, HashSet};
-use std::io::Read;
+use std::fs::OpenOptions;
+use std::io::{Read, Write};
 use std::rc::Rc;
 
 //
@@ -145,6 +147,61 @@ impl From<csv::Error> for CsvImportError {
     fn from(err: csv::Error) -> CsvImportError {
         CsvImportError::CsvDeserialisationError(err)
     }
+}
+
+//
+// Utility Traits
+//
+
+pub trait DisplayAsF64 {
+    fn to_f64(self) -> f64;
+}
+
+impl DisplayAsF64 for f64 {
+    fn to_f64(self: f64) -> f64 {
+        self
+    }
+}
+
+impl DisplayAsF64 for Weight {
+    fn to_f64(self: Weight) -> f64 {
+        self.as_f64().unwrap()
+    }
+}
+
+pub fn debug_sparse_matrix_to_csv<N>(
+    matrix: &CsMat<N>,
+    out_path: &str,
+) -> Result<(), CsvImportError>
+where
+    N: DisplayAsF64 + Zero + Clone + Copy,
+{
+    debug_dense_matrix_to_csv(&matrix.to_dense(), out_path)
+}
+
+pub fn debug_dense_matrix_to_csv<N>(
+    matrix: &DenseMatrix<N>,
+    out_path: &str,
+) -> Result<(), CsvImportError>
+where
+    N: DisplayAsF64 + Zero + Clone + Copy,
+{
+    let mut output_csv = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(out_path)?;
+
+    for row in matrix.genrows() {
+        if let Some((last, els)) = row.as_slice().and_then(|e| e.split_last()) {
+            for cell in els {
+                output_csv.write_all(format!("{},", cell.to_f64()).as_str().as_bytes())?;
+            }
+            output_csv.write_all(format!("{}", last.to_f64()).as_str().as_bytes())?;
+        }
+        output_csv.write_all(b"\n")?;
+    }
+
+    Ok(())
 }
 
 /// Constructs a `Network` graph from a list of CSVs. The structure of each
@@ -296,23 +353,29 @@ where
         &con_adj_matrix,
         &maintainers_matrix,
         &ledger_view.get_hyperparams(),
-    );
+    )
+    .to_dense();
 
     let mut current_edge_id = 0;
 
     //FIXME(adn) Here we have a precision problem: we _have_ to convert the
     //weights from fractions to f64 to avoid arithmetic overflows, but yet here
     //it's nice to work with fractions.
-    for (source, row_vec) in network_matrix.outer_iterator().enumerate() {
+    //FIXME(adn) It should be possible to avoid substantial work by iterating
+    //over the sparse matrix and somehow correctly compute the indexes for source
+    //and target.
+    for (source, row_vec) in network_matrix.outer_iter().enumerate() {
         for (target, weight) in row_vec.iter().enumerate() {
-            graph.add_edge(
-                current_edge_id,
-                &index2id.get(&source).unwrap(),
-                &index2id.get(&target).unwrap(),
-                *weight.1,
-                DependencyType::Influence(*weight.1),
-            );
-            current_edge_id += 1;
+            if *weight > 0.0 {
+                graph.add_edge(
+                    current_edge_id,
+                    &index2id.get(&source).unwrap(),
+                    &index2id.get(&target).unwrap(),
+                    *weight,
+                    DependencyType::Influence(*weight),
+                );
+                current_edge_id += 1;
+            }
         }
     }
 
