@@ -2,11 +2,10 @@
 extern crate criterion;
 extern crate oscoin_graph_api;
 extern crate rand;
-extern crate rand_xorshift;
+extern crate rand_xoshiro;
 
 use criterion::*;
 
-use crate::rand::SeedableRng;
 use osrank::algorithm::{random_walk, rank_network};
 use osrank::benchmarks::util::{
     construct_network, construct_network_small, construct_osrank_naive_algorithm, dev,
@@ -15,7 +14,8 @@ use osrank::benchmarks::util::{
 use osrank::protocol_traits::graph::GraphExtras;
 use osrank::protocol_traits::ledger::{LedgerView, MockLedger};
 use osrank::types::mock::MockNetwork;
-use rand_xorshift::XorShiftRng;
+use rand::SeedableRng;
+use rand_xoshiro::Xoshiro256StarStar;
 
 // Benchmarks intended to be run for development are appended with `(dev) `.
 // `cargo bench -- dev` will only run them.
@@ -23,7 +23,7 @@ fn bench_osrank_naive_on_small_network(c: &mut Criterion) {
     let mut network = construct_network_small();
     c.bench_function(&dev("osrank by random seed"), move |b| {
         b.iter(|| {
-            let rand_vec: [u8; 16] = rand::random();
+            let rand_vec: [u8; 32] = rand::random();
             run_osrank_naive(&mut network, 1, rand_vec)
         })
     });
@@ -36,7 +36,7 @@ fn bench_osrank_naive_on_sample_csv(c: &mut Criterion) {
     c.bench(
         &info,
         Benchmark::new("sample size 10", move |b| {
-            b.iter(|| run_osrank_naive(&mut network, 1, [0; 16]))
+            b.iter(|| run_osrank_naive(&mut network, 1, [0; 32]))
         })
         .sample_size(10),
     );
@@ -50,7 +50,7 @@ fn bench_random_walk_on_csv(c: &mut Criterion) {
     )
     .as_str());
     c.bench_function(&info, move |b| {
-        b.iter(|| run_random_walk(&network, 1, [0; 16]))
+        b.iter(|| run_random_walk(&network, 1, [0; 32]))
     });
 }
 
@@ -60,11 +60,11 @@ fn bench_rank_network(c: &mut Criterion) {
     let (_algo, mut annotator, mut ctx) = construct_osrank_naive_algorithm();
     ctx.ledger_view.set_random_walks_num(1);
 
-    let walks = random_walk::<MockLedger, MockNetwork, XorShiftRng>(
+    let walks = random_walk::<MockLedger, MockNetwork, Xoshiro256StarStar>(
         None,
         &network,
         &ctx.ledger_view,
-        &mut XorShiftRng::from_seed([0; 16]),
+        &Xoshiro256StarStar::from_seed([0; 32]),
     )
     .unwrap()
     .walks;

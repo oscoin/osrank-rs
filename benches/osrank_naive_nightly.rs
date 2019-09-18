@@ -2,7 +2,7 @@
 extern crate criterion;
 extern crate oscoin_graph_api;
 extern crate rand;
-extern crate rand_xorshift;
+extern crate rand_xoshiro;
 
 use criterion::*;
 
@@ -22,7 +22,7 @@ fn bench_nightly_osrank_naive(c: &mut Criterion) {
             let nodes = &network.node_count();
             group.bench_function(
                 BenchmarkId::new(format!("Iter {}", &iter), nodes),
-                move |b| b.iter(|| run_osrank_naive(&mut network, *iter as u32, [0; 16])),
+                move |b| b.iter(|| run_osrank_naive(&mut network, *iter as u32, [0; 32])),
             );
         }
 
@@ -31,7 +31,7 @@ fn bench_nightly_osrank_naive(c: &mut Criterion) {
         //     let nodes = &network.node_count();
         //     group.bench_function(
         //         BenchmarkId::new(format!("Iter {}", &iter), nodes),
-        //         move |b| b.iter(|| run_osrank_naive(&mut network, *iter as u32, [0; 16])),
+        //         move |b| b.iter(|| run_osrank_naive(&mut network, *iter as u32, [0; 32])),
         //     );
         // }
     }
@@ -50,7 +50,7 @@ fn bench_nightly_random_walk(c: &mut Criterion) {
             let nodes = &network.node_count();
             group.bench_function(
                 BenchmarkId::new(format!("Iter {}", &iter), nodes),
-                move |b| b.iter(|| run_random_walk(&network, *iter, [0; 16])),
+                move |b| b.iter(|| run_random_walk(&network, *iter, [0; 32])),
             );
         }
     }
@@ -59,7 +59,6 @@ fn bench_nightly_random_walk(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    bench_nightly_osrank_naive
-    // bench_nightly_random_walk
+    bench_nightly_osrank_naive // bench_nightly_random_walk
 );
 criterion_main!(benches);

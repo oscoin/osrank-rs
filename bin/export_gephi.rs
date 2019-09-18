@@ -121,7 +121,7 @@ fn main() -> Result<(), AppError> {
 
     debug!("Calculating the osrank (mock naive algorithm)...");
 
-    let initial_seed = [0; 16];
+    let initial_seed = [0; 32];
     let mut annotator: MockAnnotator<MockNetwork> = Default::default();
 
     algo.execute(&mut ctx, &mut network, &mut annotator, initial_seed)?;
@@ -130,7 +130,11 @@ fn main() -> Result<(), AppError> {
     gexf::export_graph(&network, &Path::new(&(out.to_owned() + ".gexf")))?;
 
     debug!("Exporting the network to .graphml ...");
-    graphml::export_graph(&network, &Path::new(&(out.to_owned() + ".graphml")))?;
+    graphml::export_graph(
+        &network,
+        annotator,
+        &Path::new(&(out.to_owned() + ".graphml")),
+    )?;
 
     debug!("Done.");
 
