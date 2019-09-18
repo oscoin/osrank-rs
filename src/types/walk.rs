@@ -5,16 +5,17 @@ extern crate fnv;
 extern crate fraction;
 extern crate num_traits;
 extern crate petgraph;
+extern crate rayon;
 
 use fnv::FnvHashMap;
+
+use rayon::prelude::*;
 use std::hash::Hash;
-use std::ops::Deref;
-use std::rc::Rc;
 
 #[derive(Debug, Default)]
 pub struct RandomWalks<Id>
 where
-    Id: Hash + Eq,
+    Id: Hash + Eq + Sync + Send,
 {
     /// A collection of random walks.
     random_walks: Vec<RandomWalk<Id>>,
@@ -22,7 +23,7 @@ where
 
 impl<Id> RandomWalks<Id>
 where
-    Id: Eq + Hash,
+    Id: Clone + Eq + Hash + Sync + Send,
 {
     pub fn new() -> Self {
         RandomWalks {
@@ -60,7 +61,7 @@ where
     /// ```
     pub fn count_visits(&self, idx: &Id) -> Count {
         self.random_walks
-            .iter()
+            .par_iter()
             .map(|rw| rw.count_visits(idx))
             .sum()
     }
@@ -84,8 +85,12 @@ where
     pub fn count_walks_from(&self, source: &Id) -> Count {
         self.random_walks
             .iter()
-            .filter(|rw| rw.random_walk_source.deref() == source)
+            .filter(|rw| rw.random_walk_source == *source)
             .count()
+    }
+
+    pub fn append(&mut self, mut rhs: Self) {
+        self.random_walks.append(&mut rhs.random_walks)
     }
 }
 
@@ -97,36 +102,34 @@ type Count = usize;
 /// that element.
 pub struct RandomWalk<Id>
 where
-    Id: Hash + Eq,
+    Id: Hash + Eq + Sync + Send,
 {
-    random_walk_source: Rc<Id>,
-    random_walk_visits: FnvHashMap<Rc<Id>, Count>,
+    random_walk_source: Id,
+    random_walk_visits: FnvHashMap<Id, Count>,
 }
 
 impl<Id> RandomWalk<Id>
 where
-    Id: Eq + Hash,
+    Id: Clone + Eq + Hash + Sync + Send,
 {
     /// Creates a new `RandomWalk` by passing the source (i.e. beginning)
     /// of the walk. Note that this also counts as a visit, i.e. it's not
     /// necessary to call `add_next` after calling `new`.
     pub fn new(source: Id) -> Self {
-        let ix = Rc::new(source);
         let mut m = FnvHashMap::default();
-        m.insert(Rc::clone(&ix), 1);
+        m.insert(source.clone(), 1);
         RandomWalk {
-            random_walk_source: ix,
+            random_walk_source: source,
             random_walk_visits: m,
         }
     }
 
     /// Adds a segment (typically a graph's node) to the walk.
     pub fn add_next(&mut self, idx: Id) {
-        let ix = Rc::new(idx);
-        if let Some(visits) = self.random_walk_visits.get_mut(&ix) {
+        if let Some(visits) = self.random_walk_visits.get_mut(&idx) {
             *visits += 1;
         } else {
-            self.random_walk_visits.insert(ix, 1);
+            self.random_walk_visits.insert(idx, 1);
         }
     }
 
