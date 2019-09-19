@@ -11,3 +11,4 @@ steps:
     artifact_paths:
       - "target/criterion/**/report/pdf.svg"
       - "target/criterion/**/report/lines.svg"
+    timeout_in_minutes: 120
