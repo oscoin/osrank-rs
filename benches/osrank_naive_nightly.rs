@@ -24,7 +24,7 @@ fn bench_nightly_osrank_naive(c: &mut Criterion) {
                 move |b| b.iter(|| run_osrank_naive(&mut network, *iter as u32, [0; 32])),
             );
         }
-        for count in &[5_000, 10_000, 19_370] {
+        for count in &[5_000, 19_370] {
             let mut network = construct_network(16_220, *count as usize);
             let nodes = &network.node_count();
             group.bench_function(
