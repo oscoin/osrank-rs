@@ -1,13 +1,14 @@
 steps:
   - label: 'Benchmarks'
     command: |
-        CRITERION_DEBUG=1 cargo bench -- --measurement-time 50 --sample-size 10 nightly
+        CRITERION_DEBUG=1 RAYON_NUM_THREADS=4 cargo bench -- --measurement-time 50 --sample-size 10 nightly
     env:
       DOCKER_IMAGE: "gcr.io/opensourcecoin/osrank-build@sha256:d9cb3dce4f4af6d9a7db1669617638fbd5719498ecdf8246d99a4e724b65139b"
     agents:
       platform: "linux"
       production: "true"
+      hardware: "metal"
     artifact_paths:
       - "target/criterion/**/report/pdf.svg"
       - "target/criterion/**/report/lines.svg"
-    timeout_in_minutes: 120
+    timeout_in_minutes: 180
