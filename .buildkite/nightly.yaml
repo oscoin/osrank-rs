@@ -7,7 +7,6 @@ steps:
     agents:
       platform: "linux"
       production: "true"
-      machine-type: "large"
     artifact_paths:
       - "target/criterion/**/report/pdf.svg"
       - "target/criterion/**/report/lines.svg"
