@@ -2,6 +2,7 @@
 #![warn(clippy::all)]
 
 extern crate csv;
+extern crate log;
 extern crate num_traits;
 extern crate oscoin_graph_api;
 extern crate serde;
@@ -284,6 +285,8 @@ where
             EdgeData = DependencyType<f64>,
         > + GraphWriter,
 {
+    debug!("Starting to import a Graph from the CSV files...");
+
     let mut deps_meta = DependenciesMetadata::new();
     let mut contribs_meta = ContributionsMetadata::new();
 
@@ -315,6 +318,8 @@ where
         );
     }
 
+    debug!("Added all the projects as nodes to the graph..");
+
     // Iterate once over the contributions and build a matrix where
     // rows are the project names and columns the (unique) contributors.
     for result in contribs_csv.records().filter_map(|e| e.ok()) {
@@ -341,9 +346,16 @@ where
         contribs_meta.rows.push(row)
     }
 
+    debug!("Added all the contributions as nodes to the graph..");
+
     let dep_adj_matrix = new_dependency_adjacency_matrix(&deps_meta, deps_csv)?;
+
+    debug!("Generated dep_adj_matrix...");
+
     let con_adj_matrix =
         new_contribution_adjacency_matrix(&deps_meta, &contribs_meta, Box::new(f64::from))?;
+
+    debug!("Generated con_adj_matrix...");
 
     //FIXME(adn) For now the maintenance matrix is empty.
     let maintainers_matrix = CsMat::zero((dep_adj_matrix.rows(), con_adj_matrix.cols()));
@@ -355,6 +367,8 @@ where
         &ledger_view.get_hyperparams(),
     )
     .to_dense();
+
+    debug!("Generated the full graph adjacency matrix...");
 
     let mut current_edge_id = 0;
 

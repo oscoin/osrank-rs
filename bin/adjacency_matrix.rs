@@ -9,6 +9,9 @@ extern crate osrank;
 extern crate serde;
 extern crate sprs;
 
+#[macro_use(quickcheck)]
+extern crate quickcheck_macros;
+
 use clap::{App, Arg};
 use itertools::Itertools;
 use ndarray::Array2;
@@ -19,7 +22,7 @@ use osrank::importers::csv::{
     ContributionsMetadata, CsvImportError, DepMetaRow, DependenciesMetadata, DisplayAsF64,
 };
 use osrank::linalg::{transpose_storage, DenseMatrix, SparseMatrix};
-use osrank::types::{HyperParams, Weight};
+use osrank::types::HyperParams;
 use sprs::binop::{add_mat_same_storage, scalar_mul_mat};
 use sprs::CsMat;
 
@@ -305,15 +308,53 @@ fn main() -> Result<(), CsvImportError> {
 
 #[cfg(test)]
 mod tests {
+    extern crate arrayref;
+    extern crate quickcheck;
+
     use ndarray::arr2;
-    use num_traits::{One, Zero};
+    use num_traits::{One, Signed, Zero};
     use osrank::adjacency::new_network_matrix;
     use osrank::importers::csv::{ContribRow, ContributionsMetadata, DependenciesMetadata};
-    use osrank::linalg::{hadamard_mul, normalise_rows, normalise_rows_mut};
+    use osrank::linalg::{
+        hadamard_mul, hadamard_mul_naive, normalise_rows, normalise_rows_mut, SparseMatrix,
+    };
     use osrank::types::{HyperParams, Weight};
     use pretty_assertions::assert_eq;
+    use quickcheck::{Arbitrary, Gen};
+    use rand::Rng;
     use sprs::{CsMat, TriMat, TriMatBase};
     use std::rc::Rc;
+
+    // Helper data structure to bundle two arbitrary matrixes together
+    #[derive(Clone, Debug)]
+    struct SameSizeMatrixes<N> {
+        get_mtxs: (SparseMatrix<N>, SparseMatrix<N>),
+    }
+
+    impl<N> Arbitrary for SameSizeMatrixes<N>
+    where
+        N: Arbitrary + Signed + PartialOrd + Zero,
+    {
+        // Tries to generate an arbitrary Network.
+        fn arbitrary<G: Gen>(g: &mut G) -> Self {
+            let cols = g.gen_range(1, 10);
+            let rows = g.gen_range(1, 10);
+
+            let mut matrix1 = TriMat::new((rows, cols));
+            let mut matrix2 = TriMat::new((rows, cols));
+
+            for r in 0..rows {
+                for c in 0..cols {
+                    matrix1.add_triplet(r, c, N::arbitrary(g));
+                    matrix2.add_triplet(r, c, N::arbitrary(g));
+                }
+            }
+
+            SameSizeMatrixes {
+                get_mtxs: (matrix1.to_csr(), matrix2.to_csr()),
+            }
+        }
+    }
 
     #[test]
     // Check that this implementation is the same as the Python script
@@ -343,7 +384,7 @@ mod tests {
         );
 
         let input2 = input.clone();
-        let result = hadamard_mul(input, &input2);
+        let result = hadamard_mul(&input, &input2);
 
         let expected = arr2(&[
             [64, 16, 1, 0],
@@ -364,6 +405,16 @@ mod tests {
         let result2 = &input3 * &input3;
 
         assert_ne!(result2.to_dense(), expected);
+    }
+
+    #[quickcheck]
+    // Check that the efficient implementation behaves the same of the naive
+    //one.
+    fn hadamard_mul_identity(ssm: SameSizeMatrixes<i32>) {
+        let input = ssm.get_mtxs;
+        let result = hadamard_mul(&input.0, &input.1);
+        let expected = hadamard_mul_naive(input.0, &input.1);
+        assert_eq!(result, expected);
     }
 
     #[test]
