@@ -5,7 +5,7 @@ extern crate num_traits;
 extern crate serde;
 extern crate sprs;
 
-use crate::linalg::{hadamard_mul, normalise_rows, transpose_storage, SparseMatrix};
+use crate::linalg::{hadamard_mul, normalise_rows, transpose_storage_csr, SparseMatrix};
 use crate::types::{HyperParams, Weight};
 use num_traits::{Num, Signed};
 use sprs::binop::scalar_mul_mat;
@@ -22,13 +22,13 @@ where
     N: Num + Copy + Default + From<Weight> + PartialOrd + Signed,
 {
     debug!("Generating contrib_t...");
-    let contrib_t = transpose_storage(&contrib_matrix);
+    let contrib_t = transpose_storage_csr(&contrib_matrix);
 
     debug!("Generating contrib_t_norm...");
     let contrib_t_norm = normalise_rows(&contrib_t);
 
     debug!("Generating maintainer_t and maintainer_norm...");
-    let maintainer_t = transpose_storage(&maintainer_matrix);
+    let maintainer_t = transpose_storage_csr(&maintainer_matrix);
     let maintainer_norm = normalise_rows(&maintainer_matrix);
 
     debug!("Generating project2project matrix...");

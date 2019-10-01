@@ -7,16 +7,43 @@ extern crate sprs;
 use ndarray::Array2;
 use num_traits::{Num, Signed, Zero};
 use sprs::prod::*;
-use sprs::{CsMat, CsMatI, CsMatViewI, SpIndex};
+use sprs::{CsMat, CsMatI, CsMatViewI, SpIndex, TriMatI};
 
 pub type SparseMatrix<N> = CsMat<N>;
 pub type DenseMatrix<N> = Array2<N>;
 
-pub fn transpose_storage<N>(matrix: &SparseMatrix<N>) -> SparseMatrix<N>
+/// Inefficient implementation of matrix transposition that preserve the sparse
+/// storage layout (i.e. a CSR matrix stays as such instead of being converted
+/// into a CSC).
+pub fn transpose_storage_naive<N>(matrix: &SparseMatrix<N>) -> SparseMatrix<N>
 where
     N: Num + Copy + Signed + PartialOrd + Default,
 {
     CsMat::csr_from_dense(matrix.to_dense().t().view(), N::zero())
+}
+
+/// Transpose a CSR matrix. Panics if a CSC matrix is given.
+pub fn transpose_storage_csr<N>(matrix: &SparseMatrix<N>) -> SparseMatrix<N>
+where
+    N: Num + Copy + Signed + PartialOrd + Default,
+{
+    csr_transpose_impl(&matrix.view())
+}
+
+pub fn csr_transpose_impl<N, I>(m: &CsMatViewI<N, I>) -> CsMatI<N, I>
+where
+    N: Num + Copy + Zero,
+    I: SpIndex,
+{
+    let res_rows = m.cols(); // flipped, as we are transposing.
+    let res_cols = m.rows();
+
+    let mut res = TriMatI::new((res_rows, res_cols));
+
+    for (&val, (r, c)) in m.iter() {
+        res.add_triplet(c.index(), r.index(), val)
+    }
+    res.to_csr()
 }
 
 /// Inefficient implementation of the Hadamard multiplication that (internally)
@@ -26,6 +53,14 @@ where
     N: Zero + PartialOrd + Signed + Clone,
 {
     CsMat::csr_from_dense((lhs.to_dense() * rhs.to_dense()).view(), Zero::zero())
+}
+
+pub fn hadamard_mul<N>(lhs: &SparseMatrix<N>, rhs: &SparseMatrix<N>) -> SparseMatrix<N>
+where
+    N: Zero + PartialOrd + Signed + Copy,
+{
+    let mut ws = workspace_csr(lhs, rhs);
+    csr_hadamard_mul_csr_impl(lhs.view(), rhs.view(), &mut ws)
 }
 
 /// Actual implementation of CSR-CSR Hadamard product.
@@ -92,14 +127,6 @@ where
     // TODO: shrink res storage? would need methods on CsMat
     assert_eq!(res_rows, res.rows());
     res
-}
-
-pub fn hadamard_mul<N>(lhs: &SparseMatrix<N>, rhs: &SparseMatrix<N>) -> SparseMatrix<N>
-where
-    N: Zero + PartialOrd + Signed + Copy,
-{
-    let mut ws = workspace_csr(lhs, rhs);
-    csr_hadamard_mul_csr_impl(lhs.view(), rhs.view(), &mut ws)
 }
 
 /// Normalises the rows of a Matrix.

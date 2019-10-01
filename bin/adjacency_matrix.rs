@@ -21,7 +21,7 @@ use osrank::importers::csv::{
     new_contribution_adjacency_matrix, new_dependency_adjacency_matrix, ContribRow,
     ContributionsMetadata, CsvImportError, DepMetaRow, DependenciesMetadata, DisplayAsF64,
 };
-use osrank::linalg::{transpose_storage, DenseMatrix, SparseMatrix};
+use osrank::linalg::{transpose_storage_csr, transpose_storage_naive, DenseMatrix, SparseMatrix};
 use osrank::types::HyperParams;
 use sprs::binop::{add_mat_same_storage, scalar_mul_mat};
 use sprs::CsMat;
@@ -237,7 +237,7 @@ fn build_adjacency_matrix(
     println!("outbound_links_factor: {:.32}", outbound_links_factor);
 
     println!("Transposing the network matrix...");
-    let network_matrix_t = transpose_storage(&network_matrix);
+    let network_matrix_t = transpose_storage_naive(&network_matrix);
     println!("Normalise into a probability distribution...");
     let network_t_norm = pagerank_normalise(&network_matrix_t, outbound_links_factor);
 
@@ -418,7 +418,7 @@ mod tests {
     }
 
     #[test]
-    fn transpose_works() {
+    fn transpose_sprs_works() {
         let z = Zero::zero();
 
         let c = CsMat::csr_from_dense(
@@ -444,6 +444,44 @@ mod tests {
     }
 
     #[test]
+    fn transpose_storage_csr_works() {
+        let z = Zero::zero();
+
+        let c = CsMat::csr_from_dense(
+            arr2(&[
+                [Weight::new(7, 1), z, Weight::new(3, 1)],
+                [Weight::new(4, 1), Weight::new(2, 1), z],
+            ])
+            .view(),
+            z,
+        );
+
+        // Transpose the matrix
+        let actual = super::transpose_storage_csr(&c);
+
+        let expected = arr2(&[
+            [Weight::new(7, 1), Weight::new(4, 1)],
+            [z, Weight::new(2, 1)],
+            [Weight::new(3, 1), z],
+        ]);
+
+        assert_eq!(actual.to_dense(), expected);
+    }
+
+    #[quickcheck]
+    fn transpose_storage_csr_identity(mtxs: SameSizeMatrixes<i32>) {
+        let input = mtxs.get_mtxs;
+
+        // Transpose the matrix
+        let actual = super::transpose_storage_csr(&input.0);
+        let expected = input.0.clone().transpose_into();
+
+        // The inner storage of the two matrixes will be different, so we
+        // have to convert to a dense representation before comparing.
+        assert_eq!(actual.to_dense(), expected.to_dense());
+    }
+
+    #[test]
     // Check that we can normalise by rows after a transposition.
     fn normalise_after_transpose() {
         let z = Zero::zero();
@@ -461,7 +499,7 @@ mod tests {
 
         // Transpose the matrix and normalise it.
 
-        let actual = normalise_rows(&super::transpose_storage(&c));
+        let actual = normalise_rows(&super::transpose_storage_csr(&c));
 
         let expected = arr2(&[
             [o, z, z],
