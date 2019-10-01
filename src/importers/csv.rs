@@ -365,8 +365,7 @@ where
         &con_adj_matrix,
         &maintainers_matrix,
         &ledger_view.get_hyperparams(),
-    )
-    .to_dense();
+    );
 
     debug!("Generated the full graph adjacency matrix...");
 
@@ -375,22 +374,15 @@ where
     //FIXME(adn) Here we have a precision problem: we _have_ to convert the
     //weights from fractions to f64 to avoid arithmetic overflows, but yet here
     //it's nice to work with fractions.
-    //FIXME(adn) It should be possible to avoid substantial work by iterating
-    //over the sparse matrix and somehow correctly compute the indexes for source
-    //and target.
-    for (source, row_vec) in network_matrix.outer_iter().enumerate() {
-        for (target, weight) in row_vec.iter().enumerate() {
-            if *weight > 0.0 {
-                graph.add_edge(
-                    current_edge_id,
-                    &index2id.get(&source).unwrap(),
-                    &index2id.get(&target).unwrap(),
-                    *weight,
-                    DependencyType::Influence(*weight),
-                );
-                current_edge_id += 1;
-            }
-        }
+    for (&weight, (source, target)) in network_matrix.iter() {
+        graph.add_edge(
+            current_edge_id,
+            &index2id.get(&source).unwrap(),
+            &index2id.get(&target).unwrap(),
+            weight,
+            DependencyType::Influence(weight),
+        );
+        current_edge_id += 1;
     }
 
     // Build a graph out of the matrix.
