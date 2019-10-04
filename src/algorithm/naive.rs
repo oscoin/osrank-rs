@@ -1,6 +1,8 @@
 #![allow(unknown_lints)]
 #![warn(clippy::all)]
 
+/// Implementation of a naive (but correct) version of the Osrank algorithm,
+/// which walks the entire graph every time.
 extern crate ndarray;
 extern crate oscoin_graph_api;
 extern crate petgraph;
@@ -29,23 +31,13 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::AddAssign;
 
-#[derive(Debug, PartialEq, Eq)]
-/// Errors that the `osrank` algorithm might throw.
-pub enum OsrankError {
-    /// Generic, catch-all error for things which can go wrong during the
-    /// algorithm.
-    UnknownError,
-    RngFailedToSplit(String),
-}
-
-impl From<rand::Error> for OsrankError {
-    fn from(err: rand::Error) -> OsrankError {
-        OsrankError::RngFailedToSplit(format!("{}", err))
-    }
-}
+use super::OsrankError;
 
 #[derive(Debug)]
 /// The output from a random walk.
+// TODO(adn) This type is internal as `random_walk` is the only place where
+// we return it. However, we need to use `random_walk` in the benchmarks and
+// thus this has to be `pub`, which is not very satisfactory.
 pub struct WalkResult<G, I>
 where
     I: Eq + Hash + Sync + Send,
@@ -87,7 +79,7 @@ where
             // output or consider use of a hash function with from_seed.
             // Note that seeding XorShiftRng from another XorShiftRng provides an extreme example
             // of what can go wrong: the new PRNG will be a clone of the parent."
-            //
+
             let mut thread_rng: RNG = SeedableRng::from_rng(rng.clone())?;
 
             for _ in 0..(*ledger_view.get_random_walks_num()) {
@@ -284,9 +276,10 @@ where
     <G::Node as GraphObject>::Id: Eq + Clone + Hash + Sync + Send,
 {
     for node in network_view.nodes() {
-        let rank = rank_node::<L, G>(&random_walks, node.id().clone(), ledger_view);
-        let ann = to_annotation(&node, rank);
-        annotator.annotate_graph(ann);
+        annotator.annotate_graph(to_annotation(
+            &node,
+            rank_node::<L, G>(&random_walks, node.id().clone(), ledger_view),
+        ))
     }
     Ok(())
 }
@@ -611,5 +604,4 @@ mod tests {
             ]
         );
     }
-
 }

@@ -6,7 +6,7 @@ extern crate oscoin_graph_api;
 extern crate rand;
 extern crate rand_xoshiro;
 
-use crate::algorithm::{random_walk, OsrankNaiveAlgorithm, OsrankNaiveMockContext};
+use crate::algorithm::naive::{random_walk, OsrankNaiveAlgorithm, OsrankNaiveMockContext};
 use crate::importers::csv::import_network;
 use crate::protocol_traits::ledger::{LedgerView, MockLedger};
 use crate::types::mock::{Mock, MockAnnotator, MockNetwork};
