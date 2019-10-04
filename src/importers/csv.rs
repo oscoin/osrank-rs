@@ -2,6 +2,7 @@
 #![warn(clippy::all)]
 
 extern crate csv;
+extern crate log;
 extern crate num_traits;
 extern crate oscoin_graph_api;
 extern crate serde;
@@ -284,6 +285,8 @@ where
             EdgeData = DependencyType<f64>,
         > + GraphWriter,
 {
+    debug!("Starting to import a Graph from the CSV files...");
+
     let mut deps_meta = DependenciesMetadata::new();
     let mut contribs_meta = ContributionsMetadata::new();
 
@@ -315,6 +318,8 @@ where
         );
     }
 
+    debug!("Added all the projects as nodes to the graph..");
+
     // Iterate once over the contributions and build a matrix where
     // rows are the project names and columns the (unique) contributors.
     for result in contribs_csv.records().filter_map(|e| e.ok()) {
@@ -341,9 +346,16 @@ where
         contribs_meta.rows.push(row)
     }
 
+    debug!("Added all the contributions as nodes to the graph..");
+
     let dep_adj_matrix = new_dependency_adjacency_matrix(&deps_meta, deps_csv)?;
+
+    debug!("Generated dep_adj_matrix...");
+
     let con_adj_matrix =
         new_contribution_adjacency_matrix(&deps_meta, &contribs_meta, Box::new(f64::from))?;
+
+    debug!("Generated con_adj_matrix...");
 
     //FIXME(adn) For now the maintenance matrix is empty.
     let maintainers_matrix = CsMat::zero((dep_adj_matrix.rows(), con_adj_matrix.cols()));
@@ -353,30 +365,24 @@ where
         &con_adj_matrix,
         &maintainers_matrix,
         &ledger_view.get_hyperparams(),
-    )
-    .to_dense();
+    );
+
+    debug!("Generated the full graph adjacency matrix...");
 
     let mut current_edge_id = 0;
 
     //FIXME(adn) Here we have a precision problem: we _have_ to convert the
     //weights from fractions to f64 to avoid arithmetic overflows, but yet here
     //it's nice to work with fractions.
-    //FIXME(adn) It should be possible to avoid substantial work by iterating
-    //over the sparse matrix and somehow correctly compute the indexes for source
-    //and target.
-    for (source, row_vec) in network_matrix.outer_iter().enumerate() {
-        for (target, weight) in row_vec.iter().enumerate() {
-            if *weight > 0.0 {
-                graph.add_edge(
-                    current_edge_id,
-                    &index2id.get(&source).unwrap(),
-                    &index2id.get(&target).unwrap(),
-                    *weight,
-                    DependencyType::Influence(*weight),
-                );
-                current_edge_id += 1;
-            }
-        }
+    for (&weight, (source, target)) in network_matrix.iter() {
+        graph.add_edge(
+            current_edge_id,
+            &index2id.get(&source).unwrap(),
+            &index2id.get(&target).unwrap(),
+            weight,
+            DependencyType::Influence(weight),
+        );
+        current_edge_id += 1;
     }
 
     // Build a graph out of the matrix.
