@@ -10,6 +10,9 @@ data/*.csv
 !data/cargo_dependencies.csv
 !data/cargo_dependencies_meta.csv
 !data/cargo_dependencies_meta_bench_sample.csv
+!data/rubygems_contributions.csv
+!data/rubygems_dependencies.csv
+!data/rubygems_dependencies_meta.csv
 
 coverage-report
 lcov.info
