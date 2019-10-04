@@ -10,7 +10,8 @@ extern crate clap;
 use clap::{App, Arg};
 
 use oscoin_graph_api::GraphAlgorithm;
-use osrank::algorithm::{OsrankError, OsrankNaiveAlgorithm, OsrankNaiveMockContext};
+use osrank::algorithm::naive::{OsrankNaiveAlgorithm, OsrankNaiveMockContext};
+use osrank::algorithm::OsrankError;
 use osrank::exporters::{gexf, graphml};
 use osrank::importers::csv::{import_network, CsvImportError};
 use osrank::protocol_traits::ledger::{LedgerView, MockLedger};

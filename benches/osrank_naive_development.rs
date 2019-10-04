@@ -6,7 +6,7 @@ extern crate rand_xoshiro;
 
 use criterion::*;
 
-use osrank::algorithm::{random_walk, rank_network};
+use osrank::algorithm::naive::{random_walk, rank_network};
 use osrank::benchmarks::util::{
     construct_network, construct_network_small, construct_osrank_naive_algorithm, dev,
     run_osrank_naive, run_random_walk,
