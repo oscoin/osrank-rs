@@ -31,7 +31,7 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::AddAssign;
 
-use super::OsrankError;
+use super::{Normalised, NormalisedGraph, OsrankError};
 
 #[derive(Debug)]
 /// The output from a random walk.
@@ -190,7 +190,7 @@ pub fn osrank_naive<G, A>(
     to_annotation: &dyn Fn(&G::Node, Osrank) -> A::Annotation,
 ) -> Result<(), OsrankError>
 where
-    G: GraphExtras + Clone + Send + Sync,
+    G: GraphExtras + Clone + Send + Sync + NormalisedGraph,
     A: GraphAnnotator,
     Id<G::Node>: Clone + Eq + Hash + Send + Sync,
     <G as Graph>::Weight:
@@ -318,7 +318,7 @@ impl<'a, G, L, A> Default for OsrankNaiveAlgorithm<'a, G, L, A> {
 }
 
 /// The `Context` that the osrank naive _mock_ algorithm will need.
-pub struct OsrankNaiveMockContext<'a, A, G = MockNetwork>
+pub struct OsrankNaiveMockContext<'a, A, G = Normalised<MockNetwork>>
 where
     G: Graph,
     A: GraphAnnotator,
@@ -335,7 +335,9 @@ where
     pub to_annotation: &'a (dyn Fn(&G::Node, Osrank) -> A::Annotation),
 }
 
-impl<'a> Default for OsrankNaiveMockContext<'a, MockAnnotator<MockNetwork>, MockNetwork> {
+impl<'a> Default
+    for OsrankNaiveMockContext<'a, MockAnnotator<Normalised<MockNetwork>>, Normalised<MockNetwork>>
+{
     fn default() -> Self {
         OsrankNaiveMockContext {
             seed_set: None,
@@ -369,7 +371,7 @@ fn mock_network_to_annotation(node: &Artifact<String>, rank: Osrank) -> (String,
 /// define otherwise-conflicting instances.
 impl<'a, G, L, A> GraphAlgorithm<G, A> for Mock<OsrankNaiveAlgorithm<'a, G, L, A>>
 where
-    G: GraphExtras + Clone + Send + Sync,
+    G: GraphExtras + Clone + Send + Sync + NormalisedGraph,
     L: LedgerView + Send + Sync,
     Id<G::Node>: Clone + Eq + Hash + Send + Sync,
     <G as Graph>::Weight:
@@ -412,6 +414,7 @@ mod tests {
     extern crate rand_xoshiro;
 
     use super::*;
+    use crate::algorithm::Normalised;
     use crate::protocol_traits::ledger::MockLedger;
     use crate::types::mock::{Mock, MockAnnotator, MockNetwork};
     use crate::types::network::{ArtifactType, DependencyType, Network};
@@ -423,19 +426,26 @@ mod tests {
 
     // Test that our osrank algorithm yield a probability distribution,
     // i.e. the sum of all the ranks equals 1.0 (modulo some rounding error)
-    fn prop_osrank_is_approx_probability_distribution(graph: MockNetwork) -> TestResult {
-        if graph.is_empty() {
+    fn prop_osrank_is_approx_probability_distribution(
+        graph: Normalised<MockNetwork>,
+    ) -> TestResult {
+        if graph.normalised_graph.is_empty() {
             return TestResult::discard();
         }
 
         let initial_seed = [0; 32];
 
-        let algo: Mock<OsrankNaiveAlgorithm<MockNetwork, MockLedger, MockAnnotator<MockNetwork>>> =
-            Mock {
-                unmock: OsrankNaiveAlgorithm::default(),
-            };
+        let algo: Mock<
+            OsrankNaiveAlgorithm<
+                Normalised<MockNetwork>,
+                MockLedger,
+                MockAnnotator<Normalised<MockNetwork>>,
+            >,
+        > = Mock {
+            unmock: OsrankNaiveAlgorithm::default(),
+        };
         let mut ctx = OsrankNaiveMockContext::default();
-        let mut annotator: MockAnnotator<MockNetwork> = Default::default();
+        let mut annotator: MockAnnotator<Normalised<MockNetwork>> = Default::default();
 
         assert_eq!(
             algo.execute(&mut ctx, &graph, &mut annotator, initial_seed),
@@ -459,27 +469,38 @@ mod tests {
 
     #[test]
     fn osrank_is_approx_probability_distribution() {
-        quickcheck(prop_osrank_is_approx_probability_distribution as fn(MockNetwork) -> TestResult);
+        quickcheck(
+            prop_osrank_is_approx_probability_distribution
+                as fn(Normalised<MockNetwork>) -> TestResult,
+        );
     }
 
     // Test that given the same initial seed, two osrank algorithms yields
     // exactly the same result.
-    fn prop_osrank_is_deterministic(graph: MockNetwork, entropy: Vec<u8>) -> TestResult {
-        if graph.is_empty() || entropy.len() < 32 {
+    fn prop_osrank_is_deterministic(
+        graph: Normalised<MockNetwork>,
+        entropy: Vec<u8>,
+    ) -> TestResult {
+        if graph.normalised_graph.is_empty() || entropy.len() < 32 {
             return TestResult::discard();
         }
 
         let initial_seed: &[u8; 32] = array_ref!(entropy.as_slice(), 0, 32);
 
-        let algo: Mock<OsrankNaiveAlgorithm<MockNetwork, MockLedger, MockAnnotator<MockNetwork>>> =
-            Mock {
-                unmock: OsrankNaiveAlgorithm::default(),
-            };
+        let algo: Mock<
+            OsrankNaiveAlgorithm<
+                Normalised<MockNetwork>,
+                MockLedger,
+                MockAnnotator<Normalised<MockNetwork>>,
+            >,
+        > = Mock {
+            unmock: OsrankNaiveAlgorithm::default(),
+        };
 
         let mut ctx1 = OsrankNaiveMockContext::default();
         let mut ctx2 = OsrankNaiveMockContext::default();
-        let mut annotator1: MockAnnotator<MockNetwork> = Default::default();
-        let mut annotator2: MockAnnotator<MockNetwork> = Default::default();
+        let mut annotator1: MockAnnotator<Normalised<MockNetwork>> = Default::default();
+        let mut annotator2: MockAnnotator<Normalised<MockNetwork>> = Default::default();
 
         let first_run = algo.execute(&mut ctx1, &graph, &mut annotator1, *initial_seed);
         let second_run = algo.execute(&mut ctx2, &graph, &mut annotator2, *initial_seed);
@@ -505,13 +526,15 @@ mod tests {
 
     #[test]
     fn osrank_is_deterministic() {
-        quickcheck(prop_osrank_is_deterministic as fn(MockNetwork, Vec<u8>) -> TestResult);
+        quickcheck(
+            prop_osrank_is_deterministic as fn(Normalised<MockNetwork>, Vec<u8>) -> TestResult,
+        );
     }
 
     #[test]
     fn everything_ok() {
         // build the example network
-        let mut network = Network::default();
+        let mut network = Normalised::new(Network::default());
         for node in &["p1", "p2", "p3"] {
             network.add_node(
                 node.to_string(),
@@ -561,15 +584,20 @@ mod tests {
         // by who calls `.execute`, probably the ledger/protocol.
         let initial_seed = [0; 32];
 
-        let algo: Mock<OsrankNaiveAlgorithm<MockNetwork, MockLedger, MockAnnotator<MockNetwork>>> =
-            Mock {
-                unmock: OsrankNaiveAlgorithm::default(),
-            };
+        let algo: Mock<
+            OsrankNaiveAlgorithm<
+                Normalised<MockNetwork>,
+                MockLedger,
+                MockAnnotator<Normalised<MockNetwork>>,
+            >,
+        > = Mock {
+            unmock: OsrankNaiveAlgorithm::default(),
+        };
 
         let mut ctx = OsrankNaiveMockContext::default();
         ctx.seed_set = Some(&seed_set);
 
-        let mut annotator: MockAnnotator<MockNetwork> = Default::default();
+        let mut annotator: MockAnnotator<Normalised<MockNetwork>> = Default::default();
 
         assert_eq!(
             algo.execute(&mut ctx, &network, &mut annotator, initial_seed),

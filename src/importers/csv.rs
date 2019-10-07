@@ -9,6 +9,7 @@ extern crate serde;
 extern crate sprs;
 
 use crate::adjacency::new_network_matrix;
+use crate::algorithm::Normalised;
 use crate::linalg::{DenseMatrix, SparseMatrix};
 use crate::protocol_traits::ledger::LedgerView;
 use crate::types::network::{Artifact, ArtifactType, Dependency, DependencyType};
@@ -273,7 +274,7 @@ pub fn import_network<G, L, R>(
     //TODO(and) We want to consider maintainers at some point.
     _maintainers_csv_file: Option<csv::Reader<R>>,
     ledger_view: &L,
-) -> Result<G, CsvImportError>
+) -> Result<Normalised<G>, CsvImportError>
 where
     L: LedgerView,
     R: Read,
@@ -386,7 +387,7 @@ where
     }
 
     // Build a graph out of the matrix.
-    Ok(graph)
+    Ok(Normalised::new(graph))
 }
 
 /// Creates a (sparse) adjacency matrix for the dependencies.
@@ -453,6 +454,7 @@ mod tests {
     extern crate num_traits;
     extern crate tempfile;
 
+    use crate::algorithm::Normalised;
     use crate::protocol_traits::graph::GraphExtras;
     use crate::protocol_traits::ledger::MockLedger;
     use crate::types::network::{ArtifactType, DependencyType, Network};
@@ -503,7 +505,7 @@ mod tests {
 
         let mock_ledger = MockLedger::default();
 
-        let network: Network<f64> = super::import_network(
+        let network: Normalised<Network<f64>> = super::import_network(
             csv::ReaderBuilder::new()
                 .flexible(true)
                 .from_reader(deps_file),
