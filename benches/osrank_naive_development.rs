@@ -7,6 +7,7 @@ extern crate rand_xoshiro;
 use criterion::*;
 
 use osrank::algorithm::naive::{random_walk, rank_network};
+use osrank::algorithm::Normalised;
 use osrank::benchmarks::util::{
     construct_network, construct_network_small, construct_osrank_naive_algorithm, dev,
     run_osrank_naive, run_random_walk,
@@ -60,7 +61,7 @@ fn bench_rank_network(c: &mut Criterion) {
     let (_algo, mut annotator, mut ctx) = construct_osrank_naive_algorithm();
     ctx.ledger_view.set_random_walks_num(1);
 
-    let walks = random_walk::<MockLedger, MockNetwork, Xoshiro256StarStar>(
+    let walks = random_walk::<MockLedger, Normalised<MockNetwork>, Xoshiro256StarStar>(
         None,
         &network,
         &ctx.ledger_view,

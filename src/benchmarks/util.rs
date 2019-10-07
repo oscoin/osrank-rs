@@ -7,6 +7,7 @@ extern crate rand;
 extern crate rand_xoshiro;
 
 use crate::algorithm::naive::{random_walk, OsrankNaiveAlgorithm, OsrankNaiveMockContext};
+use crate::algorithm::Normalised;
 use crate::importers::csv::import_network;
 use crate::protocol_traits::ledger::{LedgerView, MockLedger};
 use crate::types::mock::{Mock, MockAnnotator, MockNetwork};
@@ -32,21 +33,33 @@ pub fn dev(name: &str) -> String {
 }
 
 pub fn construct_osrank_naive_algorithm<'a>() -> (
-    Mock<OsrankNaiveAlgorithm<'a, MockNetwork, MockLedger, MockAnnotator<MockNetwork>>>,
-    MockAnnotator<MockNetwork>,
-    OsrankNaiveMockContext<'a, MockAnnotator<MockNetwork>, MockNetwork>,
+    Mock<
+        OsrankNaiveAlgorithm<
+            'a,
+            Normalised<MockNetwork>,
+            MockLedger,
+            MockAnnotator<Normalised<MockNetwork>>,
+        >,
+    >,
+    MockAnnotator<Normalised<MockNetwork>>,
+    OsrankNaiveMockContext<'a, MockAnnotator<Normalised<MockNetwork>>, Normalised<MockNetwork>>,
 ) {
-    let algo: Mock<OsrankNaiveAlgorithm<MockNetwork, MockLedger, MockAnnotator<MockNetwork>>> =
-        Mock {
-            unmock: OsrankNaiveAlgorithm::default(),
-        };
+    let algo: Mock<
+        OsrankNaiveAlgorithm<
+            Normalised<MockNetwork>,
+            MockLedger,
+            MockAnnotator<Normalised<MockNetwork>>,
+        >,
+    > = Mock {
+        unmock: OsrankNaiveAlgorithm::default(),
+    };
 
     let ctx = OsrankNaiveMockContext::default();
 
     (algo, Default::default(), ctx)
 }
 
-pub fn construct_network_small() -> MockNetwork {
+pub fn construct_network_small() -> Normalised<MockNetwork> {
     let mut network = Network::default();
     for node in &["p1", "p2", "p3"] {
         network.add_node(
@@ -86,10 +99,10 @@ pub fn construct_network_small() -> MockNetwork {
             DependencyType::Influence(edge.2.as_f64().unwrap()),
         )
     }
-    network
+    Normalised::new(network)
 }
 
-pub fn construct_network(meta_num: usize, contributions_num: usize) -> MockNetwork {
+pub fn construct_network(meta_num: usize, contributions_num: usize) -> Normalised<MockNetwork> {
     let deps_reader = BufReader::new(File::open("data/cargo_dependencies.csv").unwrap())
         .split(b'\n')
         .map(|l| l.unwrap())
@@ -124,18 +137,18 @@ pub fn construct_network(meta_num: usize, contributions_num: usize) -> MockNetwo
     .unwrap()
 }
 
-pub fn run_osrank_naive(network: &MockNetwork, iter: u32, initial_seed: [u8; 32]) {
+pub fn run_osrank_naive(network: &Normalised<MockNetwork>, iter: u32, initial_seed: [u8; 32]) {
     let (algo, mut annotator, mut ctx) = construct_osrank_naive_algorithm();
     ctx.ledger_view.set_random_walks_num(iter);
     algo.execute(&mut ctx, &network, &mut annotator, initial_seed)
         .unwrap();
 }
 
-pub fn run_random_walk(network: &MockNetwork, iter: u32, initial_seed: [u8; 32]) {
+pub fn run_random_walk(network: &Normalised<MockNetwork>, iter: u32, initial_seed: [u8; 32]) {
     let mut mock_ledger = MockLedger::default();
 
     mock_ledger.set_random_walks_num(iter);
-    random_walk::<MockLedger, MockNetwork, Xoshiro256StarStar>(
+    random_walk::<MockLedger, Normalised<MockNetwork>, Xoshiro256StarStar>(
         None,
         &network,
         &mock_ledger,
