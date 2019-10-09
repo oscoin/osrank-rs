@@ -133,12 +133,16 @@ fn main() -> Result<(), AppError> {
     algo.execute(&mut ctx, &mut network, &mut annotator, initial_seed)?;
 
     debug!("Exporting the network to .gexf ...");
-    gexf::export_graph(&network, &Path::new(&(out.to_owned() + ".gexf")))?;
+    gexf::export_graph(
+        &network,
+        &annotator,
+        &Path::new(&(out.to_owned() + ".gexf")),
+    )?;
 
     debug!("Exporting the network to .graphml ...");
     graphml::export_graph(
         &network,
-        annotator,
+        &annotator,
         &Path::new(&(out.to_owned() + ".graphml")),
     )?;
 

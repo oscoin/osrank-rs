@@ -1,23 +1,28 @@
 #![allow(unknown_lints)]
 #![warn(clippy::all)]
 
+use num_traits::Zero;
 use oscoin_graph_api::{Direction, EdgeRef, Graph, GraphObject};
+
+use super::{size_from_rank, NodeType, Rank, RgbColor};
+use crate::types::mock::KeyValueAnnotator;
 
 use std::convert::TryInto;
 use std::fs::{File, OpenOptions};
+use std::hash::Hash;
 use std::io::Write;
 use std::path::Path;
 
 static GEXF_META: &str = r###"<?xml version="1.0" encoding="UTF-8"?>
-<gexf xmlns="http://www.gexf.net/1.1draft" version="1.1" xmlns:viz="http://www.gexf.net/1.1draft/viz" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.gexf.net/1.1draft http://www.gexf.net/1.1draft/gexf.xsd">
+<gexf xmlns="http://www.gexf.net/1.2draft" version="1.2" xmlns:viz="http://www.gexf.net/1.2draft/viz" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.gexf.net/1.1draft http://www.gexf.net/1.1draft/gexf.xsd">
   <meta lastmodifieddate="2011-09-05">
     <creator>Gephi 0.8</creator>
     <description></description>
   </meta>
   <graph defaultedgetype="directed">
   <attributes class="node" mode="static">
-    <attribute id="modularity_class" title="Modularity Class" type="integer">
-      <default>0</default>
+    <attribute id="osrank" title="osrank" type="float">
+        <default>0.0</default>
     </attribute>
   </attributes>
 "###;
@@ -35,44 +40,25 @@ impl From<std::io::Error> for ExportError {
     }
 }
 
-pub trait IntoGefxXml {
+pub trait IntoGexfXml {
     fn render(&self) -> String;
 }
 
-struct GexfAttribute<K, V> {
-    attr_for: K,
-    attr_value: V,
-}
-
-impl IntoGefxXml for String {
+impl IntoGexfXml for String {
     fn render(&self) -> String {
         self.clone()
     }
 }
 
-impl IntoGefxXml for usize {
+impl IntoGexfXml for usize {
     fn render(&self) -> String {
         format!("{}", self)
     }
 }
 
-impl<K, V> IntoGefxXml for GexfAttribute<K, V>
+impl<V> IntoGexfXml for Option<V>
 where
-    K: IntoGefxXml,
-    V: IntoGefxXml,
-{
-    fn render(&self) -> String {
-        format!(
-            "<attvalue for=\"{}\" value=\"{}\"/>",
-            self.attr_for.render(),
-            self.attr_value.render()
-        )
-    }
-}
-
-impl<V> IntoGefxXml for Option<V>
-where
-    V: IntoGefxXml,
+    V: IntoGexfXml,
 {
     fn render(&self) -> String {
         match self {
@@ -82,32 +68,72 @@ where
     }
 }
 
+impl IntoGexfXml for RgbColor {
+    fn render(&self) -> String {
+        format!(
+            r###"<viz:color r="{}" g="{}" b="{}"></viz:color>"###,
+            self.red, self.green, self.blue
+        )
+    }
+}
+
+pub struct NodeStyle {
+    fill_color: RgbColor,
+    size: f64,
+}
+
+impl IntoGexfXml for NodeStyle {
+    fn render(&self) -> String {
+        format!(
+            r###"<viz:size value="{}"></viz:size>
+              {}"###,
+            self.size,
+            self.fill_color.render()
+        )
+    }
+}
+
+pub struct NodeAttrs {
+    rank: f64,
+}
+
+impl IntoGexfXml for NodeAttrs {
+    fn render(&self) -> String {
+        format!(
+            r###"<attvalues>
+                <attvalue for="osrank" value="{}"/>
+              </attvalues>
+              "###,
+            self.rank,
+        )
+    }
+}
+
 struct GexfNode<I> {
     id: I,
     label: Option<String>,
-    attrs: Vec<GexfAttribute<String, String>>,
+    node_style: NodeStyle,
+    node_attrs: NodeAttrs,
 }
 
-impl<I> IntoGefxXml for GexfNode<I>
+impl<I> IntoGexfXml for GexfNode<I>
 where
-    I: IntoGefxXml,
+    I: IntoGexfXml,
 {
     fn render(&self) -> String {
-        let mut values = String::new();
-
-        for a in &self.attrs {
-            values.push_str(a.render().as_str())
-        }
-
+        let mb_label = match &self.label {
+            None => String::new(),
+            Some(l) => format!(r###"label="{}""###, l),
+        };
         format!(
-            r###"<node id="{}" label="{}">
-        <viz:size value="10"></viz:size>
-        <viz:color r="168" g="168" b="29"></viz:color>
-        <attvalues>{}</attvalues>
+            r###"<node id="{}" {}>
+                 {}
+                 {}
         </node>"###,
             self.id.render(),
-            self.label.render(),
-            values
+            mb_label.render(),
+            self.node_style.render(),
+            self.node_attrs.render()
         )
     }
 }
@@ -118,10 +144,10 @@ struct GexfEdge<I, N> {
     target: N,
 }
 
-impl<I, N> IntoGefxXml for GexfEdge<I, N>
+impl<I, N> IntoGexfXml for GexfEdge<I, N>
 where
-    I: IntoGefxXml,
-    N: IntoGefxXml,
+    I: IntoGexfXml,
+    N: IntoGexfXml,
 {
     fn render(&self) -> String {
         format!(
@@ -134,20 +160,33 @@ where
 }
 
 /// Converts a `Graph::Node` into some GEXF tags.
-fn write_node<N>(node: &N, out: &mut File) -> Result<(), ExportError>
+fn write_node<N, V>(
+    node: &N,
+    annotator: &KeyValueAnnotator<<N as GraphObject>::Id, V>,
+    out: &mut File,
+) -> Result<(), ExportError>
 where
     N: GraphObject,
-    N::Id: IntoGefxXml + Clone + TryInto<String>,
+    N::Id: IntoGexfXml + Clone + TryInto<String> + Eq + Hash,
+    <N as GraphObject>::Data: Clone + Into<NodeType>,
+    V: Into<Rank<f64>> + Zero + Clone,
 {
+    let data: <N as GraphObject>::Data = (*node).data().clone();
+    let node_type: NodeType = data.clone().into();
+    let rank: Rank<f64> = annotator
+        .annotator
+        .get(&node.id())
+        .and_then(|r| Some((*r).clone()))
+        .unwrap_or_else(V::zero)
+        .into();
     let gexf_node = GexfNode {
         id: node.id().clone(),
-        label: Some(
-            node.id()
-                .clone()
-                .try_into()
-                .unwrap_or_else(|_| String::from("Unlabeled node")),
-        ),
-        attrs: Vec::new(),
+        label: node.id().clone().try_into().ok(),
+        node_style: NodeStyle {
+            fill_color: node_type.into(),
+            size: size_from_rank(rank),
+        },
+        node_attrs: NodeAttrs { rank: rank.rank },
     };
 
     out.write_all(gexf_node.render().as_bytes())?;
@@ -157,8 +196,8 @@ where
 /// Converts a `Graph::Edge` into some GEXF tags.
 fn write_edge<N, E>(edge: &EdgeRef<N, E>, out: &mut File) -> Result<(), ExportError>
 where
-    E: IntoGefxXml + Clone,
-    N: IntoGefxXml + Clone,
+    E: IntoGexfXml + Clone,
+    N: IntoGexfXml + Clone,
 {
     let gexf_edge = GexfEdge {
         id: edge.id.clone(),
@@ -171,18 +210,24 @@ where
 }
 
 /// Converts the `Graph` into some GEXF tags.
-fn write_graph<G>(g: &G, out: &mut File) -> Result<(), ExportError>
+fn write_graph<G, V>(
+    g: &G,
+    annotator: &KeyValueAnnotator<<G::Node as GraphObject>::Id, V>,
+    out: &mut File,
+) -> Result<(), ExportError>
 where
     G: Graph,
-    <G::Node as GraphObject>::Id: IntoGefxXml + Clone + TryInto<String>,
-    <G::Edge as GraphObject>::Id: IntoGefxXml + Clone,
+    <G::Node as GraphObject>::Id: IntoGexfXml + Clone + TryInto<String> + Eq + Hash,
+    <G::Node as GraphObject>::Data: Clone + Into<NodeType>,
+    <G::Edge as GraphObject>::Id: IntoGexfXml + Clone,
+    V: Into<Rank<f64>> + Zero + Clone,
 {
     let mut all_edges = Vec::new();
 
     out.write_all(b"<nodes>\n")?;
 
     for n in g.nodes() {
-        write_node(n, out)?;
+        write_node(n, annotator, out)?;
         out.write_all(b"\n")?;
         all_edges.extend(g.edges_directed(n.id(), Direction::Outgoing))
     }
@@ -203,16 +248,22 @@ where
 ///
 /// This file can then be imported into one of the many graph visualisers,
 /// like [Gephi](https://gephi.org/).
-pub fn export_graph<G>(g: &G, out: &Path) -> Result<(), ExportError>
+pub fn export_graph<G, V>(
+    g: &G,
+    annotator: &KeyValueAnnotator<<G::Node as GraphObject>::Id, V>,
+    out: &Path,
+) -> Result<(), ExportError>
 where
     G: Graph,
-    <G::Node as GraphObject>::Id: IntoGefxXml + Clone + TryInto<String>,
-    <G::Edge as GraphObject>::Id: IntoGefxXml + Clone,
+    <G::Node as GraphObject>::Id: IntoGexfXml + Clone + TryInto<String> + Eq + Hash,
+    <G::Node as GraphObject>::Data: Clone + Into<NodeType>,
+    <G::Edge as GraphObject>::Id: IntoGexfXml + Clone,
+    V: Into<Rank<f64>> + Zero + Clone,
 {
     let mut out_file = OpenOptions::new().write(true).create_new(true).open(out)?;
 
     out_file.write_all(GEXF_META.as_bytes())?;
-    write_graph(g, &mut out_file)?;
+    write_graph(g, annotator, &mut out_file)?;
     out_file.write_all(GEXF_FOOTER.as_bytes())?;
 
     Ok(())
