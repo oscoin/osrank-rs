@@ -2,17 +2,15 @@
 #![warn(clippy::all)]
 
 use crate::types::mock::KeyValueAnnotator;
-use crate::types::network::ArtifactType;
-use crate::types::Osrank;
 use oscoin_graph_api::{Direction, Edge, EdgeRef, Graph, GraphObject};
 
-use fraction::ToPrimitive;
+use super::{size_from_rank, NodeType, Rank, RgbColor};
+
 use num_traits::Zero;
 use std::convert::TryInto;
 use std::fs::{File, OpenOptions};
 use std::hash::Hash;
 use std::io::Write;
-use std::marker::PhantomData;
 use std::path::Path;
 
 /// The static header for a `.graphml` file.
@@ -91,12 +89,6 @@ where
     }
 }
 
-pub struct RgbColor {
-    red: usize,
-    green: usize,
-    blue: usize,
-}
-
 impl IntoGraphMlXml for RgbColor {
     fn render(&self) -> String {
         format!(
@@ -107,15 +99,6 @@ impl IntoGraphMlXml for RgbColor {
             self.red, self.green, self.blue
         )
     }
-}
-
-/// A rank for a node.
-///
-/// The `PhantomData` stores the type we need to convert _from_.
-#[derive(Debug, Clone)]
-pub struct Rank<T> {
-    rank: f64,
-    from_type: PhantomData<T>,
 }
 
 pub struct NodeAttrs {
@@ -138,28 +121,6 @@ impl IntoGraphMlXml for NodeAttrs {
             self.rank,
             self.fill_color.render()
         )
-    }
-}
-
-pub enum NodeType {
-    Project,
-    Account,
-}
-
-impl std::convert::From<NodeType> for RgbColor where {
-    fn from(f: NodeType) -> Self {
-        match f {
-            NodeType::Project { .. } => RgbColor {
-                red: 0,
-                green: 0,
-                blue: 255,
-            },
-            NodeType::Account { .. } => RgbColor {
-                red: 255,
-                green: 0,
-                blue: 0,
-            },
-        }
     }
 }
 
@@ -237,7 +198,7 @@ where
         id: node.id().clone(),
         node_style: NodeAttrs {
             label: lbl,
-            size: size_from_rank(rank.rank),
+            size: size_from_rank(rank),
             rank: rank.rank,
             fill_color: node_type.into(),
         },
@@ -245,14 +206,6 @@ where
 
     out.write_all(gexf_node.render().as_bytes())?;
     Ok(())
-}
-
-fn size_from_rank(r: f64) -> f64 {
-    if r <= 0.00005 {
-        10.0
-    } else {
-        10.0 + (90.0 * r)
-    }
 }
 
 /// Converts a `Graph::Edge` into some GRAPHML tags.
@@ -288,7 +241,7 @@ where
 /// Converts the `Graph` into some GRAPHML tags.
 fn write_graph<G, V>(
     g: &G,
-    annotator: KeyValueAnnotator<<G::Node as GraphObject>::Id, V>,
+    annotator: &KeyValueAnnotator<<G::Node as GraphObject>::Id, V>,
     out: &mut File,
 ) -> Result<(), ExportError>
 where
@@ -304,7 +257,7 @@ where
     out.write_all(b"<graph id=\"osrank\" edgedefault=\"directed\">\n")?;
 
     for n in g.nodes() {
-        write_node(n, &annotator, out)?;
+        write_node(n, annotator, out)?;
         out.write_all(b"\n")?;
         all_edges.extend(g.edges_directed(n.id(), Direction::Outgoing))
     }
@@ -327,7 +280,7 @@ where
 /// [official documentation](http://graphml.graphdrawing.org/).
 pub fn export_graph<G, V>(
     g: &G,
-    annotator: KeyValueAnnotator<<G::Node as GraphObject>::Id, V>,
+    annotator: &KeyValueAnnotator<<G::Node as GraphObject>::Id, V>,
     out: &Path,
 ) -> Result<(), ExportError>
 where
@@ -345,33 +298,4 @@ where
     out_file.write_all(GRAPHML_FOOTER.as_bytes())?;
 
     Ok(())
-}
-
-// Traits necessary to satisfy upstream constraints
-
-impl std::convert::From<ArtifactType> for NodeType where {
-    fn from(atype: ArtifactType) -> Self {
-        match atype {
-            ArtifactType::Project { .. } => NodeType::Project,
-            ArtifactType::Account { .. } => NodeType::Account,
-        }
-    }
-}
-
-impl std::convert::From<ArtifactType> for Rank<f64> where {
-    fn from(atype: ArtifactType) -> Self {
-        Rank {
-            rank: atype.get_osrank().to_f64().unwrap_or(0.0),
-            from_type: PhantomData,
-        }
-    }
-}
-
-impl std::convert::From<Osrank> for Rank<f64> where {
-    fn from(r: Osrank) -> Self {
-        Rank {
-            rank: r.to_f64().unwrap_or(0.0),
-            from_type: PhantomData,
-        }
-    }
 }
