@@ -18,7 +18,7 @@ extern crate sprs;
 
 use clap::{App, Arg};
 use core::fmt::Debug;
-use oscoin_graph_api::GraphAlgorithm;
+use oscoin_graph_api::{Graph, GraphAlgorithm, GraphObject};
 use std::fs::File;
 
 use osrank::algorithm::naive::{OsrankNaiveAlgorithm, OsrankNaiveMockContext};
@@ -29,6 +29,7 @@ use osrank::importers::csv::{import_network, CsvImportError};
 use osrank::protocol_traits::ledger::{LedgerView, MockLedger};
 use osrank::types;
 use osrank::types::mock::{Mock, MockAnnotator, MockAnnotatorCsvExporter, MockNetwork};
+use osrank::types::walk::SeedSet;
 
 #[derive(Debug, Fail)]
 enum AppError {
@@ -83,12 +84,18 @@ fn run_osrank(
     out_path: &str,
     osrank_algo: OsrankAlgorithm,
     ledger: MockLedger,
+    seed_set: Option<SeedSet<<<MockNetwork as Graph>::Node as GraphObject>::Id>>,
 ) -> Result<(), AppError> {
     let deps_csv_file = File::open(deps_file)?;
     let deps_meta_csv_file = File::open(deps_meta_file)?;
     let contribs_csv_file = File::open(contrib_file)?;
 
     debug!("Importing the network...");
+
+    let ss = match &seed_set {
+        None => None,
+        Some(r) => Some(r),
+    };
 
     let (algo, mut ctx, network) = match osrank_algo {
         OsrankAlgorithm::Naive => {
@@ -103,6 +110,7 @@ fn run_osrank(
                 unmock: OsrankNaiveAlgorithm::default(),
             };
             let mut ctx = OsrankNaiveMockContext::default();
+            ctx.seed_set = ss;
             ctx.ledger_view = ledger;
             let network = import_network::<MockNetwork, MockLedger, File>(
                 csv::Reader::from_reader(deps_csv_file),
@@ -126,6 +134,7 @@ fn run_osrank(
                 unmock: OsrankNaiveAlgorithm::default(),
             };
             let mut ctx = OsrankNaiveMockContext::default();
+            ctx.seed_set = ss;
             ctx.ledger_view = ledger;
             let network = import_network::<MockNetwork, MockLedger, File>(
                 csv::Reader::from_reader(deps_csv_file),
@@ -164,6 +173,12 @@ fn parse_algorithm(algo_str: &str) -> Option<OsrankAlgorithm> {
         "incremental" => Some(OsrankAlgorithm::Incremental),
         _ => None,
     }
+}
+
+fn parse_seed_set(
+    _path_to_seed_file: &str,
+) -> Option<SeedSet<<<MockNetwork as Graph>::Node as GraphObject>::Id>> {
+    None
 }
 
 fn main() -> Result<(), AppError> {
@@ -284,5 +299,6 @@ fn main() -> Result<(), AppError> {
             .and_then(parse_algorithm)
             .expect("Failed to parse algorithm. Possible choices: naive|incremental."),
         ledger_view,
+        matches.value_of("seed-set").and_then(parse_seed_set),
     )
 }

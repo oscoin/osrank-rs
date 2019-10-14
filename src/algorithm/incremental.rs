@@ -39,7 +39,7 @@ where
     <G as Graph>::Weight:
         Default + Clone + PartialOrd + for<'x> AddAssign<&'x G::Weight> + SampleUniform,
 {
-    unimplemented!("not implemented yet.");
+    unimplemented!("The incremental algorithm is not implemented yet.");
 }
 
 pub struct OsrankIncrementalAlgorithm<'a, G: 'a, L, A: 'a> {
