@@ -31,7 +31,7 @@ where
 
     for (node_id, rank) in annotator.sorted_by(|(_, v1), (_, v2)| v2.partial_cmp(v1).unwrap()) {
         output_csv.write_all(
-            format!("{} {:.32}\n", node_id, to_f64(rank))
+            format!("{},{:.32}\n", node_id, to_f64(rank))
                 .as_str()
                 .as_bytes(),
         )?;

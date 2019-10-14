@@ -11,6 +11,11 @@ extern crate sprs;
 
 #[macro_use]
 extern crate failure_derive;
+#[cfg(test)]
+extern crate quickcheck;
+#[cfg(test)]
+#[macro_use(quickcheck)]
+extern crate quickcheck_macros;
 
 use clap::{App, Arg};
 use ndarray::Array2;
@@ -333,7 +338,8 @@ mod tests {
     use osrank::adjacency::new_network_matrix;
     use osrank::importers::csv::{ContribRow, ContributionsMetadata, DependenciesMetadata};
     use osrank::linalg::{
-        hadamard_mul, hadamard_mul_naive, normalise_rows, normalise_rows_mut, SparseMatrix,
+        hadamard_mul, hadamard_mul_naive, normalise_rows, normalise_rows_mut,
+        transpose_storage_csr, SparseMatrix,
     };
     use osrank::types::{HyperParams, Weight};
     use pretty_assertions::assert_eq;
@@ -474,7 +480,7 @@ mod tests {
         );
 
         // Transpose the matrix
-        let actual = super::transpose_storage_csr(&c);
+        let actual = transpose_storage_csr(&c);
 
         let expected = arr2(&[
             [Weight::new(7, 1), Weight::new(4, 1)],
@@ -490,7 +496,7 @@ mod tests {
         let input = mtxs.get_mtxs;
 
         // Transpose the matrix
-        let actual = super::transpose_storage_csr(&input.0);
+        let actual = transpose_storage_csr(&input.0);
         let expected = input.0.clone().transpose_into();
 
         // The inner storage of the two matrixes will be different, so we
@@ -516,7 +522,7 @@ mod tests {
 
         // Transpose the matrix and normalise it.
 
-        let actual = normalise_rows(&super::transpose_storage_csr(&c));
+        let actual = normalise_rows(&transpose_storage_csr(&c));
 
         let expected = arr2(&[
             [o, z, z],
