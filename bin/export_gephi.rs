@@ -12,20 +12,21 @@ use clap::{App, Arg};
 use oscoin_graph_api::GraphAlgorithm;
 use osrank::algorithm::naive::{OsrankNaiveAlgorithm, OsrankNaiveMockContext};
 use osrank::algorithm::{Normalised, OsrankError};
-use osrank::exporters::{gexf, graphml};
+use osrank::exporters::gexf::GexfExporter;
+use osrank::exporters::graphml::GraphMlExporter;
+use osrank::exporters::{gexf, graphml, Exporter};
 use osrank::importers::csv::{import_network, CsvImportError};
 use osrank::protocol_traits::ledger::{LedgerView, MockLedger};
 use osrank::types::mock::{Mock, MockAnnotator, MockNetwork};
 
 use std::fs::File;
-use std::path::Path;
 
 #[derive(Debug)]
 enum AppError {
     AlgorithmError(OsrankError),
     ImportError(CsvImportError),
-    GexfExportError(gexf::ExportError),
-    GraphMlExportError(graphml::ExportError),
+    GexfExportError,
+    GraphMlExportError,
 }
 
 impl From<OsrankError> for AppError {
@@ -41,14 +42,14 @@ impl From<CsvImportError> for AppError {
 }
 
 impl From<gexf::ExportError> for AppError {
-    fn from(err: gexf::ExportError) -> AppError {
-        AppError::GexfExportError(err)
+    fn from(_err: gexf::ExportError) -> AppError {
+        AppError::GexfExportError
     }
 }
 
 impl From<graphml::ExportError> for AppError {
-    fn from(err: graphml::ExportError) -> AppError {
-        AppError::GraphMlExportError(err)
+    fn from(_err: graphml::ExportError) -> AppError {
+        AppError::GraphMlExportError
     }
 }
 
@@ -133,18 +134,13 @@ fn main() -> Result<(), AppError> {
     algo.execute(&mut ctx, &mut network, &mut annotator, initial_seed)?;
 
     debug!("Exporting the network to .gexf ...");
-    gexf::export_graph(
-        &network,
-        &annotator,
-        &Path::new(&(out.to_owned() + ".gexf")),
-    )?;
+
+    let gexf = GexfExporter::new(&network, &annotator, &out);
+    gexf.export_graph()?;
 
     debug!("Exporting the network to .graphml ...");
-    graphml::export_graph(
-        &network,
-        &annotator,
-        &Path::new(&(out.to_owned() + ".graphml")),
-    )?;
+    let graphml = GraphMlExporter::new(&network, &annotator, &out);
+    graphml.export_graph()?;
 
     debug!("Done.");
 

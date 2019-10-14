@@ -4,7 +4,7 @@
 use crate::types::mock::KeyValueAnnotator;
 use oscoin_graph_api::{Direction, Edge, EdgeRef, Graph, GraphObject};
 
-use super::{size_from_rank, NodeType, Rank, RgbColor};
+use super::{size_from_rank, Exporter, NodeType, Rank, RgbColor};
 
 use num_traits::Zero;
 use std::convert::TryInto;
@@ -278,7 +278,7 @@ where
 /// like [Gephi](https://gephi.org/).
 /// For a more exhaustive explanation of GraphML, refers to the
 /// [official documentation](http://graphml.graphdrawing.org/).
-pub fn export_graph<G, V>(
+pub fn export_graph_impl<G, V>(
     g: &G,
     annotator: &KeyValueAnnotator<<G::Node as GraphObject>::Id, V>,
     out: &Path,
@@ -298,4 +298,48 @@ where
     out_file.write_all(GRAPHML_FOOTER.as_bytes())?;
 
     Ok(())
+}
+
+pub struct GraphMlExporter<'a, G, V>
+where
+    G: Graph,
+{
+    graph: &'a G,
+    annotator: &'a KeyValueAnnotator<<G::Node as GraphObject>::Id, V>,
+    out_path: &'a str,
+}
+
+impl<'a, G, V> GraphMlExporter<'a, G, V>
+where
+    G: Graph,
+{
+    pub fn new(
+        graph: &'a G,
+        annotator: &'a KeyValueAnnotator<<G::Node as GraphObject>::Id, V>,
+        out_path: &'a str,
+    ) -> Self {
+        GraphMlExporter {
+            graph,
+            annotator,
+            out_path,
+        }
+    }
+}
+
+impl<'a, G, V> Exporter for GraphMlExporter<'a, G, V>
+where
+    G: Graph,
+    V: Into<Rank<f64>> + Zero + Clone,
+    <G::Node as GraphObject>::Data: Clone + Into<NodeType> + Into<Rank<f64>>,
+    <G::Node as GraphObject>::Id: IntoGraphMlXml + Clone + TryInto<String> + Eq + Hash,
+    <G::Edge as GraphObject>::Id: IntoGraphMlXml + Clone,
+    <G as Graph>::Weight: IntoGraphMlXml + Zero,
+{
+    type ExporterOutput = ();
+    type ExporterError = ExportError;
+    fn export_graph(self) -> Result<Self::ExporterOutput, Self::ExporterError> {
+        let pth = self.out_path.to_owned() + ".graphml";
+        let out_with_ext = Path::new(&pth);
+        export_graph_impl(self.graph, self.annotator, &out_with_ext)
+    }
 }

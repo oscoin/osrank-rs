@@ -9,6 +9,12 @@ use crate::types::Osrank;
 use fraction::ToPrimitive;
 use std::marker::PhantomData;
 
+pub trait Exporter {
+    type ExporterOutput;
+    type ExporterError;
+    fn export_graph(self) -> Result<Self::ExporterOutput, Self::ExporterError>;
+}
+
 /// A rank for a node.
 ///
 /// The `PhantomData` stores the type we need to convert _from_.
