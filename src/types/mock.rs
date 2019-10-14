@@ -3,10 +3,12 @@
 
 extern crate oscoin_graph_api;
 
-use crate::exporters::{export_rank_to_csv, CsvExporterError, Exporter};
+use crate::exporters::csv::{export_rank_to_csv, CsvExporterError};
+use crate::exporters::Exporter;
 use crate::types::network::{Artifact, DependencyType, Network};
 use crate::types::Osrank;
 use crate::util::quickcheck::frequency;
+use fraction::ToPrimitive;
 use oscoin_graph_api::{Graph, GraphAnnotator, GraphObject, GraphWriter};
 use quickcheck::{Arbitrary, Gen};
 use rand::Rng;
@@ -153,6 +155,10 @@ impl<'a> Exporter for MockAnnotatorCsvExporter<'a> {
     type ExporterOutput = ();
     type ExporterError = CsvExporterError;
     fn export(self) -> Result<Self::ExporterOutput, Self::ExporterError> {
-        export_rank_to_csv(self.annotator.annotator, self.out_path)
+        export_rank_to_csv(
+            self.annotator.annotator.into_iter(),
+            Box::new(|v: Osrank| v.to_f64().unwrap_or(0.0)),
+            self.out_path,
+        )
     }
 }

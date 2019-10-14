@@ -9,28 +9,61 @@ extern crate osrank;
 extern crate serde;
 extern crate sprs;
 
-#[macro_use(quickcheck)]
-extern crate quickcheck_macros;
+#[macro_use]
+extern crate failure_derive;
 
 use clap::{App, Arg};
-use itertools::Itertools;
 use ndarray::Array2;
 use osrank::adjacency::new_network_matrix;
 use osrank::collections::{Rank, WithLabels};
+use osrank::exporters::csv::{export_rank_to_csv, CsvExporterError};
 use osrank::importers::csv::{
     new_contribution_adjacency_matrix, new_dependency_adjacency_matrix, ContribRow,
     ContributionsMetadata, CsvImportError, DepMetaRow, DependenciesMetadata, DisplayAsF64,
 };
-use osrank::linalg::{transpose_storage_csr, transpose_storage_naive, DenseMatrix, SparseMatrix};
+use osrank::linalg::{transpose_storage_naive, DenseMatrix, SparseMatrix};
 use osrank::types::HyperParams;
 use sprs::binop::{add_mat_same_storage, scalar_mul_mat};
 use sprs::CsMat;
 
 use core::fmt::Debug;
 use num_traits::{Num, One, Signed, Zero};
-use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::fs::File;
 use std::rc::Rc;
+
+#[derive(Debug, Fail)]
+enum AppError {
+    // Returned in case the csv import fails.
+    #[fail(display = "i/o error when reading/writing on the CSV file {}", _0)]
+    CsvImportFailed(CsvImportError),
+    // Returned in case the csv export fails.
+    #[fail(display = "i/o error when generating the output rank file {}", _0)]
+    CsvExportFailed(CsvExporterError),
+}
+
+impl From<std::io::Error> for AppError {
+    fn from(err: std::io::Error) -> AppError {
+        AppError::CsvImportFailed(CsvImportError::from(err))
+    }
+}
+
+impl From<csv::Error> for AppError {
+    fn from(err: csv::Error) -> AppError {
+        AppError::CsvImportFailed(CsvImportError::from(err))
+    }
+}
+
+impl From<CsvImportError> for AppError {
+    fn from(err: CsvImportError) -> AppError {
+        AppError::CsvImportFailed(err)
+    }
+}
+
+impl From<CsvExporterError> for AppError {
+    fn from(err: CsvExporterError) -> AppError {
+        AppError::CsvExportFailed(err)
+    }
+}
 
 //
 // Functions
@@ -132,24 +165,8 @@ where
     dense
 }
 
-fn debug_pagerank_to_csv(rank: &Rank<f64>, out_path: &str) -> Result<(), CsvImportError> {
-    let mut output_csv = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(out_path)?;
-
-    for (project_name, pagerank) in rank
-        .into_iter()
-        .sorted_by(|(_, v1), (_, v2)| v2.partial_cmp(v1).unwrap())
-    {
-        output_csv.write_all(
-            format!("{} {:.32}\n", project_name, pagerank)
-                .as_str()
-                .as_bytes(),
-        )?;
-    }
-
-    Ok(())
+fn debug_pagerank_to_csv(rank: &Rank<f64>, out_path: &str) -> Result<(), CsvExporterError> {
+    export_rank_to_csv(rank.into_iter(), Box::new(|v| *v), out_path)
 }
 
 /// Naive porting of the Python algorithm.
@@ -158,7 +175,7 @@ fn build_adjacency_matrix(
     deps_meta_file: &str,
     contrib_file: &str,
     _out_path: &str,
-) -> Result<(), CsvImportError> {
+) -> Result<(), AppError> {
     let deps_csv = csv::Reader::from_reader(File::open(deps_file)?);
     let deps_meta_csv = csv::Reader::from_reader(File::open(deps_meta_file)?);
     let contribs_csv_first_pass = csv::Reader::from_reader(File::open(contrib_file)?);
@@ -258,7 +275,7 @@ fn build_adjacency_matrix(
     Ok(())
 }
 
-fn main() -> Result<(), CsvImportError> {
+fn main() -> Result<(), AppError> {
     let matches = App::new("Port of the adjacency matrix calculation from Jupyter")
         .arg(
             Arg::with_name("dependencies")

@@ -1,3 +1,5 @@
+/// Exports the rank of a graph into CSV.
+pub mod csv;
 pub mod dot;
 /// Exports a Graph into GEXF (Gephi Exchange Format).
 pub mod gexf;
@@ -7,52 +9,12 @@ pub mod graphml;
 use crate::types::network::ArtifactType;
 use crate::types::Osrank;
 use fraction::ToPrimitive;
-use itertools::Itertools;
-use std::collections::HashMap;
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::iter::IntoIterator;
 use std::marker::PhantomData;
 
 pub trait Exporter {
     type ExporterOutput;
     type ExporterError;
     fn export(self) -> Result<Self::ExporterOutput, Self::ExporterError>;
-}
-
-pub enum CsvExporterError {
-    IOError(std::io::Error),
-}
-
-impl From<std::io::Error> for CsvExporterError {
-    fn from(err: std::io::Error) -> CsvExporterError {
-        CsvExporterError::IOError(err)
-    }
-}
-
-/// Given a (id,rank) iterator, write into a `.csv` file the (sorted) rank,
-/// from the highest to the lowest.
-pub fn export_rank_to_csv<K, V>(
-    annotator: impl IntoIterator<Item = (K, V), IntoIter = <HashMap<K, V> as IntoIterator>::IntoIter>,
-    out_path: &str,
-) -> Result<(), CsvExporterError>
-where
-    V: ToPrimitive + PartialOrd + std::fmt::Display,
-    K: std::fmt::Display,
-{
-    let mut output_csv = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(out_path)?;
-
-    for (node_id, rank) in annotator
-        .into_iter()
-        .sorted_by(|(_, v1), (_, v2)| v2.partial_cmp(v1).unwrap())
-    {
-        output_csv.write_all(format!("{} {:.32}\n", node_id, rank).as_str().as_bytes())?;
-    }
-
-    Ok(())
 }
 
 /// A rank for a node.
