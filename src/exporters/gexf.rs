@@ -305,7 +305,7 @@ where
 {
     type ExporterOutput = ();
     type ExporterError = ExportError;
-    fn export_graph(self) -> Result<Self::ExporterOutput, Self::ExporterError> {
+    fn export(self) -> Result<Self::ExporterOutput, Self::ExporterError> {
         let pth = self.out_path.to_owned() + ".gexf";
         let out_with_ext = Path::new(&pth);
         export_graph_impl(self.graph, self.annotator, &out_with_ext)

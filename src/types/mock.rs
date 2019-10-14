@@ -3,6 +3,7 @@
 
 extern crate oscoin_graph_api;
 
+use crate::exporters::{export_rank_to_csv, CsvExporterError, Exporter};
 use crate::types::network::{Artifact, DependencyType, Network};
 use crate::types::Osrank;
 use crate::util::quickcheck::frequency;
@@ -131,5 +132,27 @@ impl Default for MockAnnotator<MockNetwork> {
         KeyValueAnnotator {
             annotator: Default::default(),
         }
+    }
+}
+
+pub struct MockAnnotatorCsvExporter<'a> {
+    pub annotator: MockAnnotator<MockNetwork>,
+    pub out_path: &'a str,
+}
+
+impl<'a> MockAnnotatorCsvExporter<'a> {
+    pub fn new(annotator: MockAnnotator<MockNetwork>, out_path: &'a str) -> Self {
+        MockAnnotatorCsvExporter {
+            annotator,
+            out_path,
+        }
+    }
+}
+
+impl<'a> Exporter for MockAnnotatorCsvExporter<'a> {
+    type ExporterOutput = ();
+    type ExporterError = CsvExporterError;
+    fn export(self) -> Result<Self::ExporterOutput, Self::ExporterError> {
+        export_rank_to_csv(self.annotator.annotator, self.out_path)
     }
 }
