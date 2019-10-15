@@ -136,11 +136,11 @@ fn main() -> Result<(), AppError> {
     debug!("Exporting the network to .gexf ...");
 
     let gexf = GexfExporter::new(&network, &annotator, &out);
-    gexf.export_graph()?;
+    gexf.export()?;
 
     debug!("Exporting the network to .graphml ...");
     let graphml = GraphMlExporter::new(&network, &annotator, &out);
-    graphml.export_graph()?;
+    graphml.export()?;
 
     debug!("Done.");
 

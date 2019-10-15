@@ -20,6 +20,8 @@ use clap::{App, Arg};
 use core::fmt::Debug;
 use oscoin_graph_api::{Graph, GraphAlgorithm, GraphObject};
 use std::fs::File;
+use std::io::prelude::*;
+use std::io::BufReader;
 
 use osrank::algorithm::naive::{OsrankNaiveAlgorithm, OsrankNaiveMockContext};
 use osrank::algorithm::{Normalised, OsrankError};
@@ -90,6 +92,11 @@ fn run_osrank(
     let deps_meta_csv_file = File::open(deps_meta_file)?;
     let contribs_csv_file = File::open(contrib_file)?;
 
+    let trusted_nodes_num = match &seed_set {
+        None => 0,
+        Some(r) => r.len(),
+    };
+
     debug!("Importing the network...");
 
     let ss = match &seed_set {
@@ -150,7 +157,10 @@ fn run_osrank(
 
     debug!(
         "{}",
-        format!("Calculating the osrank ({:#?} algorithm)...", osrank_algo)
+        format!(
+            "Calculating the osrank ({:#?} algorithm, {} trusted nodes)...",
+            osrank_algo, trusted_nodes_num
+        )
     );
 
     let initial_seed = [0; 32];
@@ -176,9 +186,23 @@ fn parse_algorithm(algo_str: &str) -> Option<OsrankAlgorithm> {
 }
 
 fn parse_seed_set(
-    _path_to_seed_file: &str,
-) -> Option<SeedSet<<<MockNetwork as Graph>::Node as GraphObject>::Id>> {
-    None
+    path_to_seed_file: &str,
+) -> Result<Option<SeedSet<<<MockNetwork as Graph>::Node as GraphObject>::Id>>, AppError>
+where
+    <<MockNetwork as Graph>::Node as GraphObject>::Id: From<String>,
+{
+    let mut trusted_nodes = SeedSet::new();
+
+    let seed_sets = File::open(path_to_seed_file)?;
+    for line in BufReader::new(seed_sets).lines() {
+        trusted_nodes.add_node(line.expect("Couldn't read line from seed set file.").into());
+    }
+
+    if trusted_nodes.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(trusted_nodes))
 }
 
 fn main() -> Result<(), AppError> {
@@ -207,6 +231,7 @@ fn main() -> Result<(), AppError> {
         )
         .arg(
             Arg::with_name("output-path")
+                .long("output-path")
                 .short("o")
                 .help("Path to the output .csv file which will contain the ranks")
                 .takes_value(true)
@@ -214,6 +239,7 @@ fn main() -> Result<(), AppError> {
         )
         .arg(
             Arg::with_name("algorithm")
+                .long("algorithm")
                 .short("a")
                 .help("The type of algorithm to use (naive|incremental).")
                 .takes_value(true)
@@ -222,7 +248,8 @@ fn main() -> Result<(), AppError> {
         )
         .arg(
             Arg::with_name("tau")
-                .help("The value of 'tau', i.e. the pruning threshold for the trustrank phase. (Default: 0.0)")
+                .long("tau")
+                .help("The value of 'tau', i.e. the pruning threshold for the trustrank phase.")
                 .takes_value(true)
                 .default_value("0.0")
                 .required(false),
@@ -230,23 +257,33 @@ fn main() -> Result<(), AppError> {
         .arg(
             Arg::with_name("iter")
                 .short("i")
-                .help("The number of iterations (R) for each random walk (Default: 10)")
+                .long("iter")
+                .help("The number of iterations (R) for each random walk.")
                 .takes_value(true)
                 .default_value("10")
                 .required(false),
         )
         .arg(
             Arg::with_name("accounts-damping-factor")
-                .help("The damping factor for accounts (Default: 0.85)")
+                .long("accounts-damping-factors")
+                .help("The damping factor for accounts.")
                 .takes_value(true)
                 .default_value("0.85")
                 .required(false),
         )
         .arg(
             Arg::with_name("projects-damping-factor")
-                .help("The damping factor for projects (Default: 0.85)")
+                .long("projects-damping-factors")
+                .help("The damping factor for projects.")
                 .takes_value(true)
                 .default_value("0.85")
+                .required(false),
+        )
+        .arg(
+            Arg::with_name("seed-set")
+                .long("seed-set")
+                .help("The initial seed set file, a list of project IDs, one each line.")
+                .takes_value(true)
                 .required(false),
         )
         .get_matches();
@@ -299,6 +336,8 @@ fn main() -> Result<(), AppError> {
             .and_then(parse_algorithm)
             .expect("Failed to parse algorithm. Possible choices: naive|incremental."),
         ledger_view,
-        matches.value_of("seed-set").and_then(parse_seed_set),
+        matches
+            .value_of("seed-set")
+            .and_then(|ss| parse_seed_set(ss).expect("Seed set parsing failed.")),
     )
 }
