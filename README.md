@@ -6,6 +6,24 @@
 This repo contains a work-in-progress, unstable, pre-alpha implementation 
 of `osrank` in Rust.
 
+Table of Contents
+=================
+
+   * [Table of Contents](#table-of-contents)
+   * [Getting started](#getting-started)
+   * [Building the project](#building-the-project)
+   * [Running the tests](#running-the-tests)
+   * [Running the benchmarks](#running-the-benchmarks)
+      * [Running the dev benchmarks](#running-the-dev-benchmarks)
+      * [Running the nightly benchmarks](#running-the-nightly-benchmarks)
+   * [Code organisation](#code-organisation)
+   * [(Binaries only) Sourcing the data](#binaries-only-sourcing-the-data)
+      * [Before starting](#before-starting)
+      * [osrank-source-dependencies](#osrank-source-dependencies)
+      * [osrank-source-contributions](#osrank-source-contributions)
+         * [Resuming work](#resuming-work)
+      * [osrank-adjacency-matrix](#osrank-adjacency-matrix)
+
 # Getting started
 
 **If you are new to the project, you might want to start by reading the 
@@ -21,6 +39,47 @@ about a possible API.
 
 ```
 rustc 1.38.0 (625451e37 2019-09-23)
+```
+
+# Running the tests
+
+Tests for the libraries can be run via:
+
+```
+cargo test --all
+```
+
+There are also tests associated with most binaries. To run them, simply run:
+
+```
+cargo test --features build-binary --bin <selected_binary>
+```
+
+# Running the benchmarks
+
+We provide benchmarks for the (naive only for now) algorithm. In order to build
+(but not run) the benchmarks, simply do:
+
+```
+cargo bench --no-run
+```
+
+We also provide a filter to select which flavour of benchmarks one wants to run.
+In particular, the `dev` benchmarks use a small number of iterations and are
+useful for "local" development, as they are fairly fast to run. Conversely,
+the nightly benchmarks are much slower and they are meant to be run as part of
+CI.
+
+## Running the dev benchmarks
+
+```
+cargo bench -- dev
+```
+
+## Running the nightly benchmarks
+
+```
+cargo bench -- nightly
 ```
 
 # Code organisation
