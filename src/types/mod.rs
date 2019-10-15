@@ -158,6 +158,7 @@ impl Zero for Weight {
 }
 
 /// The hyperparams from the paper, which are used to weight the edges.
+#[derive(Debug)]
 pub struct HyperParams {
     pub contrib_factor: Weight,
     pub contrib_prime_factor: Weight,

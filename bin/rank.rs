@@ -18,10 +18,12 @@ extern crate sprs;
 
 use clap::{App, Arg};
 use core::fmt::Debug;
+use fraction::Ratio;
 use oscoin_graph_api::{Graph, GraphAlgorithm, GraphObject};
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::BufReader;
+use std::str::FromStr;
 
 use osrank::algorithm::naive::{OsrankNaiveAlgorithm, OsrankNaiveMockContext};
 use osrank::algorithm::{Normalised, OsrankError};
@@ -98,6 +100,7 @@ fn run_osrank(
     };
 
     debug!("Importing the network...");
+    debug!("Using {:#?}", ledger.get_hyperparams());
 
     let ss = match &seed_set {
         None => None,
@@ -177,6 +180,8 @@ fn run_osrank(
     Ok(())
 }
 
+/// Parses the algorithm to use from a stringly-typed representation into a
+/// typed one.
 fn parse_algorithm(algo_str: &str) -> Option<OsrankAlgorithm> {
     match algo_str {
         "naive" => Some(OsrankAlgorithm::Naive),
@@ -203,6 +208,45 @@ where
     }
 
     Ok(Some(trusted_nodes))
+}
+
+/// Overrides the `HyperParams` with the ones passed as input (if any).
+fn parse_hyperparams(
+    contrib_txt: Option<&str>,
+    contrib_prime_txt: Option<&str>,
+    depend_txt: Option<&str>,
+    maintain_txt: Option<&str>,
+    maintain_prime_txt: Option<&str>,
+) -> Result<types::HyperParams, AppError> {
+    let mut hyperparams = types::HyperParams::default();
+
+    if let Some(contrib) = contrib_txt.and_then(to_weight) {
+        hyperparams.contrib_factor = contrib;
+    }
+
+    if let Some(contrib_prime) = contrib_prime_txt.and_then(to_weight) {
+        hyperparams.contrib_prime_factor = contrib_prime;
+    }
+
+    if let Some(depend) = depend_txt.and_then(to_weight) {
+        hyperparams.depend_factor = depend;
+    }
+
+    if let Some(maintain) = maintain_txt.and_then(to_weight) {
+        hyperparams.maintain_factor = maintain;
+    }
+
+    if let Some(maintain_prime) = maintain_prime_txt.and_then(to_weight) {
+        hyperparams.maintain_prime_factor = maintain_prime;
+    }
+
+    Ok(hyperparams)
+}
+
+fn to_weight(s: &str) -> Option<types::Weight> {
+    Ratio::from_str(s)
+        .map(|r| types::Weight::new(*r.numer(), *r.denom()))
+        .ok()
 }
 
 fn main() -> Result<(), AppError> {
@@ -286,6 +330,46 @@ fn main() -> Result<(), AppError> {
                 .takes_value(true)
                 .required(false),
         )
+        .arg(
+            Arg::with_name("contrib-factor")
+                .long("contrib-factor")
+                .help("The factor for each 'contrib' edge, expressed as a fraction.")
+                .default_value("1/7")
+                .takes_value(true)
+                .required(false),
+        )
+        .arg(
+            Arg::with_name("contrib-prime-factor")
+                .long("contrib-prime-factor")
+                .help("The factor for each 'contrib*' edge, expressed as a fraction.")
+                .default_value("2/5")
+                .takes_value(true)
+                .required(false),
+        )
+        .arg(
+            Arg::with_name("depend-factor")
+                .long("depend-factor")
+                .help("The factor for each 'depend' edge, expressed as a fraction.")
+                .default_value("4/7")
+                .takes_value(true)
+                .required(false),
+        )
+        .arg(
+            Arg::with_name("maintain-factor")
+                .long("maintain-factor")
+                .help("The factor for each 'maintain' edge, expressed as a fraction.")
+                .default_value("2/7")
+                .takes_value(true)
+                .required(false),
+        )
+        .arg(
+            Arg::with_name("maintain-prime-factor")
+                .long("maintain-prime-factor")
+                .help("The factor for each 'maintain*' edge, expressed as a fraction.")
+                .default_value("3/5")
+                .takes_value(true)
+                .required(false),
+        )
         .get_matches();
 
     let tau = matches
@@ -313,10 +397,19 @@ fn main() -> Result<(), AppError> {
         account: acc_damping_factor,
     };
 
+    let hyperparams = parse_hyperparams(
+        matches.value_of("contrib-factor"),
+        matches.value_of("contrib-prime-factor"),
+        matches.value_of("depend-factor"),
+        matches.value_of("maintain-factor"),
+        matches.value_of("maintain-prime-factor"),
+    )?;
+
     let mut ledger_view = MockLedger::default();
     ledger_view.set_tau(tau);
     ledger_view.set_random_walks_num(r);
     ledger_view.set_damping_factors(damping_factors);
+    ledger_view.set_hyperparams(hyperparams);
 
     run_osrank(
         matches
