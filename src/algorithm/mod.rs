@@ -181,7 +181,7 @@ where
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Display, PartialEq, Eq)]
 /// Errors that the `osrank` algorithm might throw.
 pub enum OsrankError {
     /// Generic, catch-all error for things which can go wrong during the

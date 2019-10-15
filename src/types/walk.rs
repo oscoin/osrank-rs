@@ -157,16 +157,32 @@ where
 ///    calculation;
 /// 2. Ensure that the entire `Graph` is explored and that random walks
 ///    eventually "explore" all the nodes.
+#[derive(Debug)]
 pub struct SeedSet<Id> {
     trusted_nodes: Vec<Id>,
 }
 
 impl<I> SeedSet<I> {
+    /// Creates a new empty `SeedSet` collection.
+    pub fn new() -> Self {
+        SeedSet {
+            trusted_nodes: Vec::new(),
+        }
+    }
+
     /// Creates a new `SeedSet` collection from a vector of identifiers.
     pub fn from(nodes: Vec<I>) -> Self {
         SeedSet {
             trusted_nodes: nodes,
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.trusted_nodes.len()
+    }
+
+    pub fn add_node(&mut self, node: I) {
+        self.trusted_nodes.push(node)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -272,5 +288,4 @@ mod tests {
 
         assert_eq!(walks.count_walks_from(&String::from("a")), 3);
     }
-
 }

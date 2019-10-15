@@ -1,3 +1,5 @@
+/// Exports the rank of a graph into CSV.
+pub mod csv;
 pub mod dot;
 /// Exports a Graph into GEXF (Gephi Exchange Format).
 pub mod gexf;
@@ -8,6 +10,12 @@ use crate::types::network::ArtifactType;
 use crate::types::Osrank;
 use fraction::ToPrimitive;
 use std::marker::PhantomData;
+
+pub trait Exporter {
+    type ExporterOutput;
+    type ExporterError;
+    fn export(self) -> Result<Self::ExporterOutput, Self::ExporterError>;
+}
 
 /// A rank for a node.
 ///

@@ -4,7 +4,7 @@
 use num_traits::Zero;
 use oscoin_graph_api::{Direction, EdgeRef, Graph, GraphObject};
 
-use super::{size_from_rank, NodeType, Rank, RgbColor};
+use super::{size_from_rank, Exporter, NodeType, Rank, RgbColor};
 use crate::types::mock::KeyValueAnnotator;
 
 use std::convert::TryInto;
@@ -248,7 +248,7 @@ where
 ///
 /// This file can then be imported into one of the many graph visualisers,
 /// like [Gephi](https://gephi.org/).
-pub fn export_graph<G, V>(
+fn export_graph_impl<G, V>(
     g: &G,
     annotator: &KeyValueAnnotator<<G::Node as GraphObject>::Id, V>,
     out: &Path,
@@ -267,4 +267,47 @@ where
     out_file.write_all(GEXF_FOOTER.as_bytes())?;
 
     Ok(())
+}
+
+pub struct GexfExporter<'a, G, V>
+where
+    G: Graph,
+{
+    graph: &'a G,
+    annotator: &'a KeyValueAnnotator<<G::Node as GraphObject>::Id, V>,
+    out_path: &'a str,
+}
+
+impl<'a, G, V> GexfExporter<'a, G, V>
+where
+    G: Graph,
+{
+    pub fn new(
+        graph: &'a G,
+        annotator: &'a KeyValueAnnotator<<G::Node as GraphObject>::Id, V>,
+        out_path: &'a str,
+    ) -> Self {
+        GexfExporter {
+            graph,
+            annotator,
+            out_path,
+        }
+    }
+}
+
+impl<'a, G, V> Exporter for GexfExporter<'a, G, V>
+where
+    G: Graph,
+    <G::Node as GraphObject>::Id: IntoGexfXml + Clone + TryInto<String> + Eq + Hash,
+    <G::Node as GraphObject>::Data: Clone + Into<NodeType>,
+    <G::Edge as GraphObject>::Id: IntoGexfXml + Clone,
+    V: Into<Rank<f64>> + Zero + Clone,
+{
+    type ExporterOutput = ();
+    type ExporterError = ExportError;
+    fn export(self) -> Result<Self::ExporterOutput, Self::ExporterError> {
+        let pth = self.out_path.to_owned() + ".gexf";
+        let out_with_ext = Path::new(&pth);
+        export_graph_impl(self.graph, self.annotator, &out_with_ext)
+    }
 }
