@@ -8,17 +8,6 @@ extern crate rand;
 /// This is a compatibility-shim trait for things that the "official"
 /// GraphAPI trait(s) don't give us for free.
 pub trait GraphExtras: oscoin::Graph {
-    fn lookup_node_metadata(
-        &self,
-        node_id: &oscoin::Id<Self::Node>,
-    ) -> Option<&oscoin::Data<Self::Node>>;
-
-    /// Lookups the _metadata_ for an edge in a layer, if any.
-    fn lookup_edge_metadata(
-        &self,
-        edge_id: &oscoin::Id<Self::Edge>,
-    ) -> Option<&oscoin::Data<Self::Edge>>;
-
     /// Returns the number of edges for this `Graph`.
     fn edge_count(&self) -> usize;
 

@@ -928,7 +928,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "oscoin-graph-api"
 version = "0.1.0"
-source = "git+https://github.com/oscoin/graph-api.git?rev=c8eed614f0d8d4f0ab265416f8caf2f4c60a1560#c8eed614f0d8d4f0ab265416f8caf2f4c60a1560"
+source = "git+https://github.com/oscoin/graph-api.git?rev=ebb95bb8349db25bb3265cff4029f18c66893243#ebb95bb8349db25bb3265cff4029f18c66893243"
+dependencies = [
+ "num-traits 0.1.43 (registry+https://github.com/rust-lang/crates.io-index)",
+ "quickcheck 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
 
 [[package]]
 name = "osrank-experiments"
@@ -948,7 +952,7 @@ dependencies = [
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "ndarray 0.12.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "num-traits 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
- "oscoin-graph-api 0.1.0 (git+https://github.com/oscoin/graph-api.git?rev=c8eed614f0d8d4f0ab265416f8caf2f4c60a1560)",
+ "oscoin-graph-api 0.1.0 (git+https://github.com/oscoin/graph-api.git?rev=ebb95bb8349db25bb3265cff4029f18c66893243)",
  "petgraph 0.4.13 (registry+https://github.com/rust-lang/crates.io-index)",
  "pretty_assertions 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "quickcheck 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2059,7 +2063,7 @@ dependencies = [
 "checksum openssl-probe 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "77af24da69f9d9341038eba93a073b1fdaaa1b788221b00a69bce9e762cb32de"
 "checksum openssl-sys 0.9.47 (registry+https://github.com/rust-lang/crates.io-index)" = "75bdd6dbbb4958d38e47a1d2348847ad1eb4dc205dc5d37473ae504391865acc"
 "checksum ordermap 0.3.5 (registry+https://github.com/rust-lang/crates.io-index)" = "a86ed3f5f244b372d6b1a00b72ef7f8876d0bc6a78a4c9985c53614041512063"
-"checksum oscoin-graph-api 0.1.0 (git+https://github.com/oscoin/graph-api.git?rev=c8eed614f0d8d4f0ab265416f8caf2f4c60a1560)" = "<none>"
+"checksum oscoin-graph-api 0.1.0 (git+https://github.com/oscoin/graph-api.git?rev=ebb95bb8349db25bb3265cff4029f18c66893243)" = "<none>"
 "checksum output_vt100 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "53cdc5b785b7a58c5aad8216b3dfa114df64b0b06ae6e1501cef91df2fbdf8f9"
 "checksum owning_ref 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)" = "49a4b8ea2179e6a2e27411d3bca09ca6dd630821cf6894c6c7c8467a8ee7ef13"
 "checksum parking_lot 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)" = "ab41b4aed082705d1056416ae4468b6ea99d52599ecf3169b00088d43113e337"

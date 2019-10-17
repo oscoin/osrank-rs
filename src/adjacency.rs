@@ -6,8 +6,8 @@ extern crate serde;
 extern crate sprs;
 
 use crate::linalg::{hadamard_mul, normalise_rows, transpose_storage_csr, SparseMatrix};
-use crate::types::{HyperParams, Weight};
 use num_traits::{Num, Signed};
+use oscoin_graph_api::types;
 use sprs::binop::scalar_mul_mat;
 use sprs::{hstack, vstack, CsMat};
 
@@ -16,10 +16,10 @@ pub fn new_network_matrix<N>(
     dep_matrix: &SparseMatrix<N>,
     contrib_matrix: &SparseMatrix<N>,
     maintainer_matrix: &SparseMatrix<N>,
-    hyperparams: &HyperParams,
+    hyperparams: &types::HyperParameters<N>,
 ) -> SparseMatrix<N>
 where
-    N: Num + Copy + Default + From<Weight> + PartialOrd + Signed,
+    N: Default + Copy + Clone + Num + PartialOrd + Signed,
 {
     debug!("Generating contrib_t...");
     let contrib_t = transpose_storage_csr(&contrib_matrix);
@@ -34,20 +34,33 @@ where
     debug!("Generating project2project matrix...");
     let project_to_project = scalar_mul_mat(
         &normalise_rows(&dep_matrix),
-        hyperparams.depend_factor.into(),
+        hyperparams
+            .get_param(&types::EdgeTypeTag::Dependency)
+            .clone(),
     );
 
     debug!("Generating project2account matrix...");
-    let project_to_account = &scalar_mul_mat(&maintainer_norm, hyperparams.maintain_factor.into())
+    let maintain_factor = hyperparams
+        .get_param(&types::EdgeTypeTag::ProjectToUserMembership)
+        .clone();
+    let project_to_account = &scalar_mul_mat(&maintainer_norm, maintain_factor)
         + &scalar_mul_mat(
             &normalise_rows(&contrib_matrix),
-            hyperparams.contrib_factor.into(),
+            hyperparams
+                .get_param(&types::EdgeTypeTag::ProjectToUserContribution)
+                .clone(),
         );
 
     debug!("Generating account2project matrix...");
-    let a1 = scalar_mul_mat(&contrib_t_norm, hyperparams.contrib_prime_factor.into());
+    let contrib_prime_factor = hyperparams
+        .get_param(&types::EdgeTypeTag::UserToProjectContribution)
+        .clone();
+    let a1 = scalar_mul_mat(&contrib_t_norm, contrib_prime_factor);
+    let maintain_prime_factor = hyperparams
+        .get_param(&types::EdgeTypeTag::UserToProjectMembership)
+        .clone();
     let account_to_project = &hadamard_mul(
-        &scalar_mul_mat(&maintainer_t, hyperparams.maintain_prime_factor.into()),
+        &scalar_mul_mat(&maintainer_t, maintain_prime_factor),
         &contrib_t_norm,
     ) + &a1;
 

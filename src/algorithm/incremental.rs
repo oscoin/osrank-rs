@@ -61,24 +61,27 @@ impl<'a, G, L, A> Default for OsrankIncrementalAlgorithm<'a, G, L, A> {
 }
 
 /// The `Context` that the osrank naive _mock_ algorithm will need.
-pub struct OsrankIncrementalMockContext<'a, A, G = MockNetwork>
+pub struct OsrankIncrementalMockContext<'a, A, W>
 where
-    G: Graph,
     A: GraphAnnotator,
 {
     /// The optional `SeetSet` to use.
-    pub seed_set: Option<&'a SeedSet<Id<G::Node>>>,
+    pub seed_set: Option<&'a SeedSet<Id<<MockNetwork<W> as Graph>::Node>>>,
     /// The `LedgerView` for this context, i.e. a `MockLedger`.
-    pub ledger_view: MockLedger,
+    pub ledger_view: MockLedger<W>,
     /// The `to_annotation` function is a "getter" function that given a
     /// generic `Node` "knows" how to extract an annotation out of an `Osrank`.
     /// This function is necessary to bridge the gap between the algorithm being
     /// written in a totally generic way and the need to convert from a
     /// fraction-like `Osrank` into an `A::Annotation`.
-    pub to_annotation: &'a (dyn Fn(&G::Node, Osrank) -> A::Annotation),
+    pub to_annotation: &'a (dyn Fn(&<MockNetwork<W> as Graph>::Node, Osrank) -> A::Annotation),
 }
 
-impl<'a> Default for OsrankIncrementalMockContext<'a, MockAnnotator<MockNetwork>, MockNetwork> {
+impl<'a, W> Default for OsrankIncrementalMockContext<'a, MockAnnotator<MockNetwork<W>>, W>
+where
+    MockLedger<W>: Default,
+    W: Clone,
+{
     fn default() -> Self {
         OsrankIncrementalMockContext {
             seed_set: None,
@@ -88,7 +91,7 @@ impl<'a> Default for OsrankIncrementalMockContext<'a, MockAnnotator<MockNetwork>
     }
 }
 
-fn mock_network_to_annotation(node: &Artifact<String>, rank: Osrank) -> (String, Osrank) {
+fn mock_network_to_annotation(node: &Artifact<String, Osrank>, rank: Osrank) -> (String, Osrank) {
     let artifact_id = node.id().clone();
     (artifact_id, rank)
 }
@@ -110,18 +113,17 @@ fn mock_network_to_annotation(node: &Artifact<String>, rank: Osrank) -> (String,
 /// *real* algorithm, using *real* data. This is why the `Mock` wrapper is so
 /// handy: `Mock a` is still isomorphic to `a`, but allows us to
 /// define otherwise-conflicting instances.
-impl<'a, G, L, A> GraphAlgorithm<G, A> for Mock<OsrankIncrementalAlgorithm<'a, G, L, A>>
+impl<'a, L, W, A> GraphAlgorithm<MockNetwork<W>, A>
+    for Mock<OsrankIncrementalAlgorithm<'a, MockNetwork<W>, L, A>>
 where
-    G: GraphExtras + Clone + Send + Sync,
     L: LedgerView + Send + Sync,
-    Id<G::Node>: Clone + Eq + Hash + Send + Sync,
-    <G as Graph>::Weight:
-        Default + Clone + PartialOrd + for<'x> AddAssign<&'x G::Weight> + SampleUniform,
-    OsrankIncrementalMockContext<'a, A, G>: Default,
+    //Id<G::Node>: Clone + Eq + Hash + Send + Sync,
+    W: Default + Clone + PartialOrd + for<'x> AddAssign<&'x W> + SampleUniform + Send + Sync,
+    OsrankIncrementalMockContext<'a, A, W>: Default,
     A: GraphAnnotator,
 {
     type Output = ();
-    type Context = OsrankIncrementalMockContext<'a, A, G>;
+    type Context = OsrankIncrementalMockContext<'a, A, W>;
     type Error = OsrankError;
     type RngSeed = [u8; 32];
     type Annotation = <A as GraphAnnotator>::Annotation;
@@ -129,7 +131,7 @@ where
     fn execute(
         &self,
         ctx: &mut Self::Context,
-        graph: &G,
+        graph: &MockNetwork<W>,
         annotator: &mut A,
         initial_seed: <Xoshiro256StarStar as SeedableRng>::Seed,
     ) -> Result<Self::Output, Self::Error> {

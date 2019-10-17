@@ -5,7 +5,8 @@ pub mod naive;
 
 use crate::protocol_traits::graph::GraphExtras;
 use oscoin_graph_api::{
-    Data, Direction, EdgeRefs, Edges, Graph, GraphDataWriter, GraphWriter, Id, Nodes, NodesMut,
+    Data, Direction, EdgeRefs, Edges, Graph, GraphDataReader, GraphDataWriter, GraphWriter, Id,
+    Nodes, NodesMut,
 };
 use quickcheck::{Arbitrary, Gen};
 
@@ -99,11 +100,10 @@ where
         edge_id: Id<Self::Edge>,
         source: &Id<Self::Node>,
         to: &Id<Self::Node>,
-        weight: Self::Weight, // in this implementation, this is contained within the metadata
         edge_metadata: Data<Self::Edge>,
     ) {
         self.normalised_graph
-            .add_edge(edge_id, source, to, weight, edge_metadata)
+            .add_edge(edge_id, source, to, edge_metadata)
     }
 
     fn remove_edge(&mut self, edge_id: Id<Self::Edge>) {
@@ -154,6 +154,19 @@ where
     }
 }
 
+impl<G> GraphDataReader for Normalised<G>
+where
+    G: GraphDataReader,
+{
+    fn node_data(&self, node_id: &Id<Self::Node>) -> Option<&Data<Self::Node>> {
+        self.normalised_graph.node_data(node_id)
+    }
+
+    fn edge_data(&self, edge_id: &Id<Self::Edge>) -> Option<&Data<Self::Edge>> {
+        self.normalised_graph.edge_data(edge_id)
+    }
+}
+
 impl<G> GraphExtras for Normalised<G>
 where
     G: GraphExtras,
@@ -164,14 +177,6 @@ where
 
     fn node_count(&self) -> usize {
         self.normalised_graph.node_count()
-    }
-
-    fn lookup_node_metadata(&self, node_id: &Id<Self::Node>) -> Option<&Data<Self::Node>> {
-        self.normalised_graph.lookup_node_metadata(node_id)
-    }
-
-    fn lookup_edge_metadata(&self, edge_id: &Id<Self::Edge>) -> Option<&Data<Self::Edge>> {
-        self.normalised_graph.lookup_edge_metadata(edge_id)
     }
 
     fn subgraph_by_nodes(&self, sub_nodes: Vec<&Id<Self::Node>>) -> Self {

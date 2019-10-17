@@ -4,260 +4,320 @@
 extern crate fraction;
 extern crate num_traits;
 extern crate petgraph;
+
+#[cfg(test)]
 extern crate quickcheck;
 
 use num_traits::Zero;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::path::Path;
+use std::ops::{Div, Mul};
 
-use super::Osrank;
 use crate::protocol_traits::graph::{GraphExtras, PetgraphEdgeAdaptor, PetgraphNodeAdaptor};
 use oscoin_graph_api::{
-    Data, Direction, Edge, EdgeRefs, Edges, Graph, GraphDataWriter, GraphObject, GraphWriter, Id,
-    Node, Nodes, NodesMut,
+    types, Data, Direction, Edge, EdgeRefs, Edges, Graph, GraphDataReader, GraphDataWriter,
+    GraphObject, GraphWriter, Id, Node, Nodes, NodesMut,
 };
-use petgraph::dot::{Config, Dot};
 use petgraph::graph::{node_index, EdgeIndex, NodeIndex};
 use petgraph::visit::EdgeRef;
 use petgraph::Directed;
 
-use crate::util::quickcheck::frequency;
+use crate::types::dynamic_weight::DynamicWeights;
+use crate::types::Weight;
+
+#[cfg(test)]
+use crate::util::quickcheck::{frequency, Alphanumeric, Positive};
+
+#[cfg(test)]
 use quickcheck::{Arbitrary, Gen};
 
 #[derive(Debug, Clone)]
-pub struct Dependency<Id: Clone, W: Clone> {
+pub struct Dependency<Id, NodeId, W> {
     id: Id,
-    dependency_type: DependencyType<W>,
+    source: NodeId,
+    target: NodeId,
+    dependency_data: types::EdgeData<W>,
 }
 
-impl<Id, W> fmt::Display for Dependency<Id, W>
+impl<Id, NodeId, W> fmt::Display for Dependency<Id, NodeId, W>
 where
-    W: fmt::Display + Clone,
-    Id: fmt::Display + Clone,
+    W: fmt::Display,
+    Id: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(
             f,
-            "Dependency [ id = {}, type = {} ]",
-            self.id, self.dependency_type
+            "Dependency [ id = {}, type = {:#?} ]",
+            self.id, self.dependency_data.edge_type
         )
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum DependencyType<W: Clone> {
-    Contrib(W),
-    ContribPrime(W),
-    Maintain(W),
-    MaintainPrime(W),
-    Depend(W),
-    /// This is not in the original whitepaper, but it's used as an edge
-    /// metadata once we have normalised the edges and we have now only a
-    /// single directed edge from A -> B
-    Influence(W),
-}
-
-impl<W> fmt::Display for DependencyType<W>
-where
-    W: fmt::Display + Clone,
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        match self {
-            DependencyType::Contrib(ref w) => write!(f, "{:.5}", w),
-            DependencyType::ContribPrime(ref w) => write!(f, "{:.5}", w),
-            DependencyType::Maintain(ref w) => write!(f, "{:.5}", w),
-            DependencyType::MaintainPrime(ref w) => write!(f, "{:.5}", w),
-            DependencyType::Depend(ref w) => write!(f, "{:.5}", w),
-            DependencyType::Influence(ref w) => write!(f, "{:.5}", w),
-        }
-    }
-}
-
-impl<W> DependencyType<W>
-where
-    W: Clone,
-{
-    pub fn get_weight(&self) -> &W {
-        match self {
-            DependencyType::Contrib(ref w) => w,
-            DependencyType::ContribPrime(ref w) => w,
-            DependencyType::Maintain(ref w) => w,
-            DependencyType::MaintainPrime(ref w) => w,
-            DependencyType::Depend(ref w) => w,
-            DependencyType::Influence(ref w) => w,
-        }
-    }
-}
-
-impl<DependencyId, W> GraphObject for Dependency<DependencyId, W>
-where
-    DependencyId: Clone,
-    W: Clone,
-{
+impl<DependencyId, NodeId, W> GraphObject for Dependency<DependencyId, NodeId, W> {
     type Id = DependencyId;
-    type Data = DependencyType<W>;
+    type Data = types::EdgeData<W>;
 
     fn id(&self) -> &Self::Id {
         &self.id
     }
 
     fn data(&self) -> &Self::Data {
-        &self.dependency_type
+        &self.dependency_data
     }
 
     fn data_mut(&mut self) -> &mut Self::Data {
-        &mut self.dependency_type
+        &mut self.dependency_data
     }
 }
 
-impl<DependencyId, W> Edge<W, DependencyType<W>> for Dependency<DependencyId, W>
-where
-    DependencyId: Clone,
-    W: Clone,
-{
+impl<EdgeId, NodeId, W> Edge<W, NodeId, types::EdgeData<W>> for Dependency<EdgeId, NodeId, W> {
+    fn source(&self) -> &NodeId {
+        &self.source
+    }
+
+    fn target(&self) -> &NodeId {
+        &self.target
+    }
+
     fn weight(&self) -> W {
-        self.dependency_type.get_weight().clone()
+        panic!("Network doesn't support static weight calculation. Please use dynamic_weight() instead.")
+    }
+
+    fn edge_type(&self) -> &types::EdgeType {
+        &self.dependency_data.edge_type
     }
 }
 
-#[derive(Clone, Debug, PartialOrd, PartialEq, Eq)]
-pub struct Artifact<Id: Clone> {
-    id: Id,
-    artifact_type: ArtifactType,
-}
-
-impl<Id> Artifact<Id>
+impl<W, R> DynamicWeights for Network<W, R>
 where
-    Id: Clone,
+    W: Clone + Mul<Output = W> + Div<Output = W> + From<Weight>,
+    R: Clone + Zero,
 {
-    pub fn new_account(id: Id) -> Self {
+    fn dynamic_weight(
+        &self,
+        edge: &impl Edge<Self::Weight, <Self::Node as GraphObject>::Id, Self::EdgeData>,
+        hyperparams: &types::HyperParameters<Self::Weight>,
+    ) -> Self::Weight {
+        let e_type = edge.edge_type();
+
+        // Let's start by assigning this edge the stock default value, by
+        // reading it from the hyperparams.
+        let mut weight: Self::Weight = (hyperparams.get_param(&e_type.to_tag())).clone();
+
+        // others can't be zero as there is at least one edge, i.e. the
+        // input one.
+        let others = edges_of_same_type(self, edge, Direction::Outgoing, e_type);
+
+        let source_node = self
+            .get_node(edge.source())
+            .expect("dynamic_weight: source node not found.");
+
+        // Then we need to do something different based on the type of edge.
+        match e_type.to_tag() {
+            types::EdgeTypeTag::ProjectToUserContribution => {
+                // contrib is multiplied by the number of contributions of
+                // the account to the project, divided by the total number
+                // of contributions in the project.
+                let total_project_contrib = source_node.node_type().total_contributions();
+                let user_contribs = edge.edge_type().total_contributions();
+
+                weight = weight * Weight::new(user_contribs, total_project_contrib).into()
+            }
+            types::EdgeTypeTag::UserToProjectContribution => {
+                // contrib* and maintain* are multiplied by the number of
+                // contributions of the account to the project, divided by
+                // the total number of contributions of the account.
+                let total_account_contrib = source_node.node_type().total_contributions();
+                let user_contribs = edge.edge_type().total_contributions();
+
+                weight = weight * Weight::new(user_contribs, total_account_contrib).into()
+            }
+            types::EdgeTypeTag::UserToProjectMembership => {
+                // The weight is divided by the corresponding count of
+                // outgoing edges of the same type on the node.
+                weight = weight / others.into()
+            }
+            types::EdgeTypeTag::ProjectToUserMembership => {
+                // contrib* and maintain* are multiplied by the number of
+                // contributions of the account to the project, divided by
+                // the total number of contributions of the account.
+                let total_account_contrib = source_node.node_type().total_contributions();
+                let user_contribs = edge.edge_type().total_contributions();
+
+                weight = weight * Weight::new(user_contribs, total_account_contrib).into()
+            }
+            types::EdgeTypeTag::Dependency => {
+                // The weight is divided by the corresponding count of
+                // outgoing edges of the same type on the node.
+                weight = weight / others.into()
+            }
+        }
+
+        weight
+    }
+}
+
+fn edges_of_same_type<G>(
+    graph: &G,
+    edge: &impl Edge<G::Weight, <G::Node as GraphObject>::Id, G::EdgeData>,
+    direction: Direction,
+    edge_type: &types::EdgeType,
+) -> Weight
+where
+    G: Graph,
+{
+    Weight::new(
+        graph
+            .edges_directed(edge.source(), direction)
+            .iter()
+            .filter(|eref| eref.edge_type == edge_type)
+            .count() as u32,
+        1u32,
+    )
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Artifact<Id, W> {
+    id: Id,
+    artifact_data: types::NodeData<W>,
+}
+
+impl<Id, W> Artifact<Id, W>
+where
+    W: Zero,
+{
+    pub fn new_account(id: Id, contributions_to_all_projects: u32) -> Self {
         Artifact {
             id,
-            artifact_type: ArtifactType::Account {
-                osrank: Zero::zero(),
+            artifact_data: types::NodeData {
+                node_type: types::NodeType::User {
+                    contributions_to_all_projects,
+                },
+                rank: types::NodeRank { rank: W::zero() },
             },
         }
     }
 
-    pub fn new_project(id: Id) -> Self {
+    pub fn new_project(id: Id, contributions_from_all_users: u32) -> Self {
         Artifact {
             id,
-            artifact_type: ArtifactType::Project {
-                osrank: Zero::zero(),
+            artifact_data: types::NodeData {
+                node_type: types::NodeType::Project {
+                    contributions_from_all_users,
+                },
+                rank: types::NodeRank { rank: W::zero() },
             },
         }
     }
 }
 
-#[derive(Clone, Debug, PartialOrd, PartialEq, Eq)]
-pub enum ArtifactType {
-    Project { osrank: Osrank },
-    Account { osrank: Osrank },
-}
-
-impl ArtifactType {
-    pub fn set_osrank(&mut self, new: Osrank) {
-        match self {
-            ArtifactType::Project { ref mut osrank } => *osrank = new,
-            ArtifactType::Account { ref mut osrank } => *osrank = new,
-        }
-    }
-
-    pub fn get_osrank(&self) -> Osrank {
-        match self {
-            ArtifactType::Project { osrank } => *osrank,
-            ArtifactType::Account { osrank } => *osrank,
-        }
-    }
-}
-
-impl Arbitrary for ArtifactType {
-    fn arbitrary<G: Gen>(g: &mut G) -> Self {
-        let choices = vec![
-            (
-                50,
-                ArtifactType::Project {
-                    osrank: Osrank::new(g.next_u64(), 1u8),
-                },
-            ),
-            (
-                50,
-                ArtifactType::Account {
-                    osrank: Osrank::new(g.next_u64(), 1u8),
-                },
-            ),
-        ];
-        frequency(g, choices)
-    }
-}
-
-impl<ArtifactId> GraphObject for Artifact<ArtifactId>
+impl<ArtifactId, W> GraphObject for Artifact<ArtifactId, W>
 where
     ArtifactId: Clone,
 {
     type Id = ArtifactId;
-    type Data = ArtifactType;
+    type Data = types::NodeData<W>;
 
     fn id(&self) -> &Self::Id {
         &self.id
     }
 
     fn data(&self) -> &Self::Data {
-        &self.artifact_type
+        &self.artifact_data
     }
 
     fn data_mut(&mut self) -> &mut Self::Data {
-        &mut self.artifact_type
+        &mut self.artifact_data
     }
 }
 
-impl<ArtifactId> Node<ArtifactType> for Artifact<ArtifactId> where ArtifactId: Clone {}
-
-impl<Id> fmt::Display for Artifact<Id>
+impl<ArtifactId, W> Node<types::NodeData<W>> for Artifact<ArtifactId, W>
 where
-    Id: fmt::Display + Clone,
+    ArtifactId: Clone,
+{
+    fn node_type(&self) -> &types::NodeType {
+        &self.artifact_data.node_type
+    }
+}
+
+impl<Id, W> fmt::Display for Artifact<Id, W>
+where
+    Id: fmt::Display,
+    W: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        match self.artifact_type {
-            ArtifactType::Project { osrank } => write!(f, "id: {} osrank: {:.5}", self.id, osrank),
-            ArtifactType::Account { osrank } => write!(f, "id: {} osrank: {:.5}", self.id, osrank),
+        match self.artifact_data.node_type {
+            types::NodeType::Project { .. } => write!(
+                f,
+                "Project [ id: {}, osrank: {:.5} ]",
+                self.id, self.artifact_data.rank.rank
+            ),
+            types::NodeType::User { .. } => write!(
+                f,
+                "User [ id: {}, osrank: {:.5} ]",
+                self.id, self.artifact_data.rank.rank
+            ),
         }
     }
 }
 
-impl<ArtifactId> Arbitrary for Artifact<ArtifactId>
+#[cfg(test)]
+impl<W> Arbitrary for Artifact<String, W>
 where
-    ArtifactId: Arbitrary,
+    W: Zero + Arbitrary,
 {
     fn arbitrary<G: Gen>(g: &mut G) -> Self {
-        let id: ArtifactId = Arbitrary::arbitrary(g);
+        let id: String = Alphanumeric::arbitrary(g).get_alphanumeric;
+        let acc_contribs: Positive<u32> = Arbitrary::arbitrary(g);
+        let prj_contribs: Positive<u32> = Arbitrary::arbitrary(g);
         let choices = vec![
-            (50, Artifact::new_account(id.clone())),
-            (50, Artifact::new_project(id)),
+            (
+                50,
+                Artifact::new_account(id.clone(), acc_contribs.get_positive),
+            ),
+            (50, Artifact::new_project(id, prj_contribs.get_positive)),
         ];
         frequency(g, choices)
     }
 }
 
 /// The network graph from the paper, comprising of both accounts and projects.
-#[derive(Clone, Debug, Default)]
-pub struct Network<W: Clone> {
-    from_graph: petgraph::Graph<Artifact<String>, Dependency<usize, W>, Directed>,
+#[derive(Clone, Debug)]
+pub struct Network<W, R> {
+    from_graph: petgraph::Graph<Artifact<String, R>, Dependency<usize, String, W>, Directed>,
     node_ids: HashMap<String, NodeIndex>,
     edge_ids: HashMap<usize, EdgeIndex>,
 }
 
-impl<W> Network<W>
+impl<W, R> Default for Network<W, R> {
+    fn default() -> Self {
+        Network {
+            from_graph: petgraph::Graph::new(),
+            node_ids: HashMap::default(),
+            edge_ids: HashMap::default(),
+        }
+    }
+}
+
+impl<W, R> Network<W, R>
 where
-    W: fmt::Display + Clone,
+    W: Clone,
+    R: Clone + Zero,
 {
     /// Adds an Artifact to the Network.
-    fn add_artifact(&mut self, id: String, artifact_type: ArtifactType) {
+    fn add_artifact(&mut self, id: String, artifact_data: types::NodeData<R>) {
         let id_cloned = id.clone();
-        let a = Artifact { id, artifact_type };
+        let mut a = match artifact_data.node_type {
+            types::NodeType::Project {
+                contributions_from_all_users,
+            } => Artifact::new_project(id, contributions_from_all_users),
+            types::NodeType::User {
+                contributions_to_all_projects,
+            } => Artifact::new_account(id, contributions_to_all_projects),
+        };
+
+        a.artifact_data = artifact_data;
+
         let nid = self.from_graph.add_node(a);
 
         self.node_ids.insert(id_cloned, nid);
@@ -268,32 +328,23 @@ where
     /// in the input Network.
     fn unsafe_add_dependency(
         &mut self,
+        source_id: &String,
+        target_id: &String,
         source: usize,
         target: usize,
         id: usize,
-        dependency_type: DependencyType<W>,
+        dependency_data: types::EdgeData<W>,
     ) {
         let d = Dependency {
             id,
-            dependency_type,
+            source: source_id.to_string(),
+            target: target_id.to_string(),
+            dependency_data,
         };
         let eid = self
             .from_graph
             .add_edge(node_index(source), node_index(target), d);
         self.edge_ids.insert(id, eid);
-    }
-
-    /// Debug-only function to render a Network into a Graphiz dot file.
-    pub fn to_graphviz_dot(&self, output_path: &Path) -> Result<(), Box<std::io::Error>> {
-        let mut dot_file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(output_path)?;
-        dot_file.write_fmt(format_args!(
-            "{}",
-            Dot::with_config(&self.from_graph, &[Config::EdgeNoLabel])
-        ))?;
-        Ok(())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -304,12 +355,13 @@ where
     }
 }
 
-impl<W> GraphWriter for Network<W>
+impl<W, R> GraphWriter for Network<W, R>
 where
-    W: Default + fmt::Display + Clone,
+    W: Clone,
+    R: Clone + Zero,
 {
-    fn add_node(&mut self, node_id: Id<Self::Node>, node_metadata: Data<Self::Node>) {
-        self.add_artifact(node_id, node_metadata);
+    fn add_node(&mut self, node_id: Id<Self::Node>, node_data: types::NodeData<R>) {
+        self.add_artifact(node_id, node_data);
     }
 
     fn remove_node(&mut self, node_id: Id<Self::Node>) {
@@ -325,8 +377,7 @@ where
         edge_id: Id<Self::Edge>,
         source: &Id<Self::Node>,
         to: &Id<Self::Node>,
-        _weight: Self::Weight, // in this implementation, this is contained within the metadata
-        edge_metadata: Data<Self::Edge>,
+        edge_data: types::EdgeData<W>,
     ) {
         //NOTE(adn) Should we return a `Result` rather than blowing everything up?
         match self
@@ -339,10 +390,10 @@ where
             Some((s, t)) => {
                 let src = (*s).index();
                 let tgt = (*t).index();
-                self.unsafe_add_dependency(src, tgt, edge_id, edge_metadata);
+                self.unsafe_add_dependency(source, to, src, tgt, edge_id, edge_data);
             }
             None => panic!(
-                "add_adge: invalid link, source {} or target {} are missing.",
+                "add_adge: invalid link, source {:#?} or target {:#?} are missing.",
                 source, to
             ),
         }
@@ -373,15 +424,15 @@ where
     }
 }
 
-impl<W> Graph for Network<W>
+impl<W, R> Graph for Network<W, R>
 where
-    W: Default + fmt::Display + Clone,
+    R: Zero,
 {
-    type Node = Artifact<String>;
-    type Edge = Dependency<usize, W>;
+    type Node = Artifact<String, R>;
+    type Edge = Dependency<usize, String, W>;
     type Weight = W;
-    type NodeData = ArtifactType;
-    type EdgeData = DependencyType<W>;
+    type NodeData = types::NodeData<R>;
+    type EdgeData = types::EdgeData<W>;
 
     fn neighbors(&self, node_id: &Id<Self::Node>) -> Nodes<Self::Node> {
         let mut nodes = Vec::new();
@@ -481,6 +532,7 @@ where
                     from: self.from_graph[eref.source()].id(),
                     to: self.from_graph[eref.target()].id(),
                     id: self.from_graph[eref.id()].id(),
+                    edge_type: &self.from_graph[eref.id()].dependency_data.edge_type,
                 })
             }
         }
@@ -489,9 +541,10 @@ where
     }
 }
 
-impl<W> GraphDataWriter for Network<W>
+impl<W, R> GraphDataWriter for Network<W, R>
 where
-    W: Default + fmt::Display + Clone,
+    W: Clone,
+    R: Clone + Zero,
 {
     fn edge_data_mut(&mut self, id: &Id<Self::Edge>) -> Option<&mut Data<Self::Edge>> {
         let mb_id = self.edge_ids.get(id);
@@ -510,9 +563,27 @@ where
     }
 }
 
-impl<W> GraphExtras for Network<W>
+impl<W, R> GraphDataReader for Network<W, R>
 where
-    W: Default + fmt::Display + Clone,
+    R: Zero,
+{
+    fn node_data(&self, node_id: &Id<Self::Node>) -> Option<&Data<Self::Node>> {
+        self.node_ids
+            .get(node_id)
+            .and_then(|n| Some(self.from_graph[*n].data()))
+    }
+
+    fn edge_data(&self, edge_id: &Id<Self::Edge>) -> Option<&Data<Self::Edge>> {
+        self.edge_ids
+            .get(edge_id)
+            .and_then(|e| Some(self.from_graph[*e].data()))
+    }
+}
+
+impl<W, R> GraphExtras for Network<W, R>
+where
+    W: Clone,
+    R: Clone + Zero,
 {
     fn edge_count(&self) -> usize {
         self.from_graph.edge_count()
@@ -520,17 +591,6 @@ where
 
     fn node_count(&self) -> usize {
         self.from_graph.node_count()
-    }
-
-    fn lookup_node_metadata(&self, node_id: &Id<Self::Node>) -> Option<&Data<Self::Node>> {
-        self.node_ids
-            .get(node_id)
-            .and_then(|n| Some(self.from_graph[*n].data()))
-    }
-    fn lookup_edge_metadata(&self, edge_id: &Id<Self::Edge>) -> Option<&Data<Self::Edge>> {
-        self.edge_ids
-            .get(edge_id)
-            .and_then(|e| Some(self.from_graph[*e].data()))
     }
 
     fn subgraph_by_nodes(&self, sub_nodes: Vec<&String>) -> Self {
@@ -559,7 +619,6 @@ where
                         graph_edge_id.clone(),
                         graph_node_id,
                         &graph_edge_target,
-                        edge_object.weight().clone(),
                         edge_object.data().clone(),
                     );
                 }
@@ -576,9 +635,10 @@ pub trait PrintableGraph<'a>: Graph {
     fn print_nodes(&self);
 }
 
-impl<'a, W> PrintableGraph<'a> for Network<W>
+impl<'a, W, R> PrintableGraph<'a> for Network<W, R>
 where
-    W: Default + fmt::Display + Clone,
+    W: fmt::Display + Clone,
+    R: fmt::Display + Clone + Zero,
 {
     fn print_nodes(&self) {
         for arti in self
@@ -596,13 +656,13 @@ where
 mod tests {
 
     use super::*;
-    use crate::types::Weight;
+    use crate::types::{Osrank, Weight};
 
-    fn network_fixture() -> Network<f64> {
+    fn network_fixture() -> Network<Weight, Osrank> {
         let mut network = Network::default();
 
         for node in &["p1", "p2", "p3"] {
-            let a = Artifact::new_project(node.to_string());
+            let a = Artifact::new_project(node.to_string(), 100);
             network.add_node(a.id().clone(), a.data().clone());
         }
 
@@ -618,8 +678,10 @@ mod tests {
                 2,
                 &edge.0.to_string(),
                 &edge.1.to_string(),
-                edge.2.as_f64().unwrap(),
-                DependencyType::Influence(edge.2.as_f64().unwrap()),
+                types::EdgeData {
+                    edge_type: types::EdgeType::Dependency,
+                    weight: edge.2,
+                },
             )
         }
 
@@ -693,10 +755,9 @@ mod tests {
     // Tests that setting & getting an `Artifact`'s metadata roundtrips.
 
     #[quickcheck]
-    fn artifact_get_set_metadata_roundtrip(meta: ArtifactType) {
-        let mut a = Artifact::new_account("foo");
+    fn artifact_get_set_metadata_roundtrip(meta: types::NodeData<f64>) {
+        let mut a = Artifact::new_account("foo", 0);
         *a.data_mut() = meta.clone();
         assert_eq!(*a.data(), meta);
     }
-
 }

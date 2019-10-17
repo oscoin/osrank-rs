@@ -9,14 +9,13 @@ extern crate serde;
 extern crate sprs;
 
 use crate::adjacency::new_network_matrix;
-use crate::algorithm::Normalised;
 use crate::linalg::{DenseMatrix, SparseMatrix};
-use crate::protocol_traits::ledger::LedgerView;
-use crate::types::network::{Artifact, ArtifactType, Dependency, DependencyType};
-use crate::types::Weight;
+use crate::protocol_traits::graph::GraphExtras;
+use crate::types::network::{Artifact, Dependency};
+use crate::types::{Osrank, Weight};
 use core::fmt;
-use num_traits::{Num, One, Zero};
-use oscoin_graph_api::{Graph, GraphWriter};
+use num_traits::{Num, One, Signed, Zero};
+use oscoin_graph_api::{types, Graph, GraphDataReader, GraphDataWriter, GraphObject, GraphWriter};
 use serde::Deserialize;
 use sprs::{CsMat, TriMat, TriMatBase};
 use std::collections::{HashMap, HashSet};
@@ -31,6 +30,7 @@ use std::rc::Rc;
 type ProjectId = u32;
 type ProjectName = String;
 type Contributor = String;
+type Contributions = HashMap<Rc<Contributor>, HashMap<ProjectName, u32>>;
 // We need a way to map external indexes with an incremental index suitable
 // for matrix manipulation, so we define this LocalMatrixIndex exactly for
 // this purpose.
@@ -206,6 +206,132 @@ where
     Ok(())
 }
 
+/// The import context.
+struct ImportCtx<G> {
+    deps_meta: DependenciesMetadata,
+    contribs_meta: ContributionsMetadata,
+    graph: G,
+    // Stores the global mapping between matrix indexes and node names,
+    // which includes projects & accounts
+    index2id: HashMap<usize, String>,
+    // Stores the mapping between users and their total contributions to
+    // *all* the projects.
+    user2contributions: Contributions,
+}
+
+impl<G> ImportCtx<G>
+where
+    G: GraphDataReader<
+            Node = Artifact<String, Osrank>,
+            Edge = Dependency<usize, String, <G as Graph>::Weight>,
+            NodeData = types::NodeData<Osrank>,
+            EdgeData = types::EdgeData<<G as Graph>::Weight>,
+        > + GraphDataWriter,
+{
+    fn new() -> ImportCtx<G> {
+        ImportCtx {
+            deps_meta: DependenciesMetadata::new(),
+            contribs_meta: ContributionsMetadata::new(),
+            graph: G::default(),
+            index2id: HashMap::default(),
+            user2contributions: HashMap::default(),
+        }
+    }
+
+    /// Determines which kind of edge type this is by taking an holistic view
+    /// over the entire graph.
+    fn edge_type(
+        &self,
+        source: &<G::Node as GraphObject>::Id,
+        target: &<G::Node as GraphObject>::Id,
+    ) -> types::EdgeType {
+        let source_type = self
+            .graph
+            .node_data(source)
+            .expect("node_data not found for csv::edge_type.");
+        let target_type = self
+            .graph
+            .node_data(target)
+            .expect("node_data not found for csv::edge_type.");
+
+        match (&source_type.node_type, &target_type.node_type) {
+            (types::NodeType::User { .. }, types::NodeType::User { .. }) => {
+                panic!("Impossible: account -> account connection found.")
+            }
+            (types::NodeType::User { .. }, types::NodeType::Project { .. }) => {
+                // NOTE(adn) By the virtue of the fact we ignore maintenanceship
+                // for now, this is always `contribᵒ` for now.
+                let contribs = self.edge_contributions(source, target);
+                types::EdgeType::UserToProjectContribution(contribs)
+            }
+            (types::NodeType::Project { .. }, types::NodeType::User { .. }) => {
+                // NOTE(adn) Same considerations as per above..
+                let contribs = self.edge_contributions(target, source);
+                types::EdgeType::ProjectToUserContribution(contribs)
+            }
+            (types::NodeType::Project { .. }, types::NodeType::Project { .. }) => {
+                types::EdgeType::Dependency
+            }
+        }
+    }
+
+    fn edge_contributions(
+        &self,
+        source: &<G::Node as GraphObject>::Id,
+        target: &<G::Node as GraphObject>::Id,
+    ) -> u32 {
+        self.user2contributions
+            .get(source)
+            .and_then(|p| p.get(target))
+            .map(|v| *v)
+            .unwrap_or(0)
+    }
+
+    fn set_user_total_contribs(&mut self, user: &Contributor) {
+        match self.user2contributions.get(user) {
+            None => (),
+            Some(prjs) => {
+                let total: u32 = prjs.values().sum();
+
+                if total > 0 {
+                    match self.graph.node_data_mut(user).iter_mut().next() {
+                        None => (),
+                        Some(d) => d.node_type.set_contributions(total),
+                    }
+                }
+            }
+        }
+    }
+
+    fn update_projects_contributions(&mut self, user: &Contributor) {
+        match self.user2contributions.get(user) {
+            None => {}
+            Some(contributed_projects) => {
+                for (project_id, contribs) in contributed_projects.iter() {
+                    match self.graph.node_data_mut(project_id) {
+                        None => {}
+                        Some(ref mut node_data) => node_data.node_type.add_contributions(*contribs),
+                    }
+                }
+            }
+        }
+    }
+
+    fn set_user_contribs_for_project(
+        &mut self,
+        contributor: &Rc<Contributor>,
+        prj: &ProjectName,
+        contrib_num: u32,
+    ) {
+        let prjs = self
+            .user2contributions
+            .entry(Rc::clone(contributor))
+            .or_insert_with(HashMap::new);
+
+        prjs.insert(prj.clone(), contrib_num);
+    }
+}
+
 /// Constructs a `Network` graph from a list of CSVs. The structure of each
 /// csv is important, and is documented below.
 ///
@@ -248,54 +374,45 @@ where
 /// Rust ecosystem, simply run
 ///
 /// ```rust, no_run
-/// use osrank::protocol_traits::ledger::MockLedger;
+/// use osrank::protocol_traits::ledger::{MockLedger, LedgerView};
 /// use osrank::importers::csv::import_network;
-/// use osrank::types::network::Network;
+/// use osrank::types::mock::MockNetwork;
 /// use std::fs::File;
-///
-/// type MockNetwork = Network<f64>;
 ///
 /// let mut deps_csv_file = File::open("data/cargo_dependencies.csv").unwrap();
 /// let mut deps_meta_csv_file = File::open("data/cargo_dependencies_meta.csv").unwrap();
 /// let mut contribs_csv_file = File::open("data/cargo_contributions.csv").unwrap();
 /// let mock_ledger = MockLedger::default();
-/// let network = import_network::<MockNetwork, MockLedger, File>( csv::Reader::from_reader(deps_csv_file)
+/// let network = import_network::<MockNetwork<f64>, File>( csv::Reader::from_reader(deps_csv_file)
 ///                             , csv::Reader::from_reader(deps_meta_csv_file)
 ///                             , csv::Reader::from_reader(contribs_csv_file)
 ///                             , None
-///                             , &mock_ledger);
+///                             , &mock_ledger.get_hyperparams());
 /// assert_eq!(network.is_ok(), true);
 /// ```
 ///
-pub fn import_network<G, L, R>(
+pub fn import_network<G, R>(
     deps_csv: csv::Reader<R>,
     deps_meta_csv: csv::Reader<R>,
     mut contribs_csv: csv::Reader<R>,
     //TODO(and) We want to consider maintainers at some point.
     _maintainers_csv_file: Option<csv::Reader<R>>,
-    ledger_view: &L,
-) -> Result<Normalised<G>, CsvImportError>
+    hyperparams: &types::HyperParameters<<G as Graph>::Weight>,
+) -> Result<G, CsvImportError>
 where
-    L: LedgerView,
     R: Read,
-    G: Graph<
-            Node = Artifact<String>,
-            Edge = Dependency<usize, f64>,
-            Weight = f64,
-            NodeData = ArtifactType,
-            EdgeData = DependencyType<f64>,
-        > + GraphWriter,
+    <G as Graph>::Weight: Default + Num + Copy + Clone + From<u32> + PartialOrd + Signed,
+    G: GraphExtras<
+            Node = Artifact<String, Osrank>,
+            Edge = Dependency<usize, String, <G as Graph>::Weight>,
+            NodeData = types::NodeData<Osrank>,
+            EdgeData = types::EdgeData<<G as Graph>::Weight>,
+        > + GraphWriter
+        + GraphDataReader,
 {
     debug!("Starting to import a Graph from the CSV files...");
 
-    let mut deps_meta = DependenciesMetadata::new();
-    let mut contribs_meta = ContributionsMetadata::new();
-
-    let mut graph = G::default();
-
-    // Stores the global mapping between matrix indexes and node names,
-    // which includes projects & accounts..
-    let mut index2id: HashMap<usize, String> = HashMap::default();
+    let mut ctx: ImportCtx<G> = ImportCtx::new();
 
     // Iterate once over the dependencies metadata and store the name and id.
     // We need to maintain some sort of mapping between the order of visit
@@ -303,23 +420,29 @@ where
     for result in deps_meta_csv.into_records().filter_map(|e| e.ok()) {
         let row: DepMetaRow = result.deserialize(None)?;
         let prj_id = row.name.clone();
-        deps_meta.ids.insert(row.id);
-        deps_meta.labels.push(row.name);
-        deps_meta
+        ctx.deps_meta.ids.insert(row.id);
+        ctx.deps_meta.labels.push(row.name);
+        ctx.deps_meta
             .project2index
-            .insert(row.id, deps_meta.ids.len() - 1);
-        index2id.insert(index2id.len(), prj_id.clone());
+            .insert(row.id, ctx.deps_meta.ids.len() - 1);
+        ctx.index2id.insert(ctx.index2id.len(), prj_id.clone());
 
         // Add the projects as nodes in the graph.
-        graph.add_node(
+        ctx.graph.add_node(
             prj_id,
-            ArtifactType::Project {
-                osrank: Zero::zero(),
+            types::NodeData {
+                node_type: types::NodeType::Project {
+                    contributions_from_all_users: 0,
+                },
+                rank: Zero::zero(),
             },
         );
     }
 
-    debug!("Added all the projects as nodes to the graph..");
+    debug!(
+        "Added all {} projects as nodes to the graph..",
+        ctx.graph.node_count()
+    );
 
     // Iterate once over the contributions and build a matrix where
     // rows are the project names and columns the (unique) contributors.
@@ -327,34 +450,59 @@ where
         let row: ContribRow = result.deserialize(None)?;
         let contributor = Rc::new(row.contributor.clone());
 
-        if contribs_meta.contributors.get(&row.contributor).is_none() {
-            contribs_meta.contributors.insert(Rc::clone(&contributor));
-            contribs_meta.contributor2index.insert(
+        if ctx
+            .contribs_meta
+            .contributors
+            .get(&row.contributor)
+            .is_none()
+        {
+            ctx.contribs_meta
+                .contributors
+                .insert(Rc::clone(&contributor));
+            ctx.contribs_meta.contributor2index.insert(
                 Rc::clone(&contributor),
-                contribs_meta.contributors.len() - 1,
+                ctx.contribs_meta.contributors.len() - 1,
             );
 
-            index2id.insert(index2id.len(), Rc::clone(&contributor).to_string());
+            ctx.index2id
+                .insert(ctx.index2id.len(), Rc::clone(&contributor).to_string());
 
-            graph.add_node(
+            ctx.graph.add_node(
                 contributor.to_string(),
-                ArtifactType::Account {
-                    osrank: Zero::zero(),
+                types::NodeData {
+                    node_type: types::NodeType::User {
+                        contributions_to_all_projects: 0,
+                    },
+                    rank: Zero::zero(),
                 },
             );
         }
 
-        contribs_meta.rows.push(row)
+        ctx.set_user_contribs_for_project(&contributor, &row.project_name, row.contributions);
+        ctx.contribs_meta.rows.push(row);
     }
 
-    debug!("Added all the contributions as nodes to the graph..");
+    // At this point we added to the graph all the contributor nodes, and we
+    // have build a mapping between each user and a map of <project_id, u32>
+    // contributions. At this point we need to iterate over the contribution_id
+    // set and update the *projects* total_contributions correctly.
 
-    let dep_adj_matrix = new_dependency_adjacency_matrix(&deps_meta, deps_csv)?;
+    let contributors = ctx.contribs_meta.contributors.clone();
+    for contributor in &contributors {
+        ctx.set_user_total_contribs(&contributor);
+        ctx.update_projects_contributions(&contributor);
+    }
+
+    debug!(
+        "Added all the {} contributions as nodes to the graph..",
+        contributors.len()
+    );
+
+    let dep_adj_matrix = new_dependency_adjacency_matrix(&ctx.deps_meta, deps_csv)?;
 
     debug!("Generated dep_adj_matrix...");
 
-    let con_adj_matrix =
-        new_contribution_adjacency_matrix(&deps_meta, &contribs_meta, Box::new(f64::from))?;
+    let con_adj_matrix = new_contribution_adjacency_matrix(&ctx.deps_meta, &ctx.contribs_meta)?;
 
     debug!("Generated con_adj_matrix...");
 
@@ -365,29 +513,54 @@ where
         &dep_adj_matrix,
         &con_adj_matrix,
         &maintainers_matrix,
-        &ledger_view.get_hyperparams(),
+        hyperparams,
     );
 
     debug!("Generated the full graph adjacency matrix...");
 
-    let mut current_edge_id = 0;
+    let mut invalid_connections = 0;
 
-    //FIXME(adn) Here we have a precision problem: we _have_ to convert the
-    //weights from fractions to f64 to avoid arithmetic overflows, but yet here
-    //it's nice to work with fractions.
-    for (&weight, (source, target)) in network_matrix.iter() {
-        graph.add_edge(
-            current_edge_id,
-            &index2id.get(&source).unwrap(),
-            &index2id.get(&target).unwrap(),
-            weight,
-            DependencyType::Influence(weight),
-        );
-        current_edge_id += 1;
+    for (current_edge_id, (&weight, (source, target))) in network_matrix.iter().enumerate() {
+        // Here we still exploit the adjacency information, but we use it
+        // to construct parallel edges.
+
+        let source_id = &ctx.index2id.get(&source).unwrap();
+        let target_id = &ctx.index2id.get(&target).unwrap();
+
+        let edge_type = ctx.edge_type(source_id, target_id);
+
+        let valid_connection = match edge_type {
+            types::EdgeType::Dependency => true,
+            _ => edge_type.total_contributions() > 0,
+        };
+
+        if valid_connection {
+            ctx.graph.add_edge(
+                current_edge_id,
+                source_id,
+                target_id,
+                types::EdgeData {
+                    edge_type,
+                    // It doesn't matter which value we assign here, because we are
+                    // not going to look at it during the algorithms (i.e. we will
+                    // use the dynamic weight calculation).
+                    weight,
+                },
+            );
+        } else {
+            invalid_connections += 1;
+        }
     }
 
+    debug!(
+        "Generated a graph with {} nodes and {} edges, while filtering out {} invalid connections.",
+        ctx.graph.node_count(),
+        ctx.graph.edge_count(),
+        invalid_connections
+    );
+
     // Build a graph out of the matrix.
-    Ok(Normalised::new(graph))
+    Ok(ctx.graph)
 }
 
 /// Creates a (sparse) adjacency matrix for the dependencies.
@@ -421,10 +594,9 @@ where
 pub fn new_contribution_adjacency_matrix<N>(
     deps_meta: &DependenciesMetadata,
     contribs_meta: &ContributionsMetadata,
-    mk_contribution: Box<dyn Fn(u32) -> N>,
 ) -> Result<ContributionMatrix<N>, CsvImportError>
 where
-    N: Num + Clone,
+    N: Num + Clone + From<u32>,
 {
     // Creates a sparse matrix of projects x contributors
     let mut contrib_adj: TriMat<N> =
@@ -442,7 +614,7 @@ where
                         .map(|col| (*row_ix, *col))
                 })
         {
-            contrib_adj.add_triplet(row_ix, col_ix, mk_contribution(row.contributions))
+            contrib_adj.add_triplet(row_ix, col_ix, N::from(row.contributions))
         }
     }
 
@@ -454,11 +626,10 @@ mod tests {
     extern crate num_traits;
     extern crate tempfile;
 
-    use crate::algorithm::Normalised;
-    use crate::protocol_traits::graph::GraphExtras;
-    use crate::protocol_traits::ledger::MockLedger;
-    use crate::types::network::{ArtifactType, DependencyType, Network};
+    use crate::protocol_traits::ledger::{LedgerView, MockLedger};
+    use crate::types::mock::MockNetwork;
     use num_traits::Zero;
+    use oscoin_graph_api::{types, GraphDataReader};
     use std::io::{Seek, Write};
     use tempfile::tempfile;
 
@@ -505,7 +676,7 @@ mod tests {
 
         let mock_ledger = MockLedger::default();
 
-        let network: Normalised<Network<f64>> = super::import_network(
+        let network: MockNetwork<f64> = super::import_network(
             csv::ReaderBuilder::new()
                 .flexible(true)
                 .from_reader(deps_file),
@@ -516,20 +687,34 @@ mod tests {
                 .flexible(true)
                 .from_reader(contrib_file),
             None,
-            &mock_ledger,
+            &mock_ledger.get_hyperparams(),
         )
         .unwrap_or_else(|e| panic!("returned unexpected error: {}", e));
 
         assert_eq!(
-            network.lookup_node_metadata(&String::from("foo")),
-            Some(&ArtifactType::Project {
-                osrank: Zero::zero()
+            network.node_data(&String::from("foo")),
+            Some(&types::NodeData {
+                node_type: types::NodeType::Project {
+                    contributions_from_all_users: 100
+                },
+                rank: Zero::zero()
             }),
         );
 
         assert_eq!(
-            network.lookup_edge_metadata(&0),
-            Some(&DependencyType::Influence(0.8)),
+            network.edge_data(&0),
+            Some(&types::EdgeData {
+                edge_type: types::EdgeType::Dependency,
+                weight: 0.8,
+            }),
+        );
+
+        assert_eq!(
+            network.edge_data(&7),
+            Some(&types::EdgeData {
+                edge_type: types::EdgeType::UserToProjectContribution(100),
+                weight: 1.0,
+            }),
         )
     }
 }
