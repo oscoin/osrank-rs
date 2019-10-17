@@ -18,6 +18,7 @@ use num_traits::Zero;
 use oscoin_graph_api::{GraphAlgorithm, GraphWriter};
 use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256StarStar;
+use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
@@ -102,39 +103,72 @@ pub fn construct_network_small() -> Normalised<MockNetwork> {
     Normalised::new(network)
 }
 
+const OSRANK_NIGHTLY_NETWORK_DEPS: &str = "OSRANK_NIGHTLY_NETWORK_DEPS";
+const OSRANK_NIGHTLY_NETWORK_DEPS_META: &str = "OSRANK_NIGHTLY_NETWORK_DEPS_META";
+const OSRANK_NIGHTLY_NETWORK_CONTRIBUTIONS: &str = "OSRANK_NIGHTLY_NETWORK_CONTRIBUTIONS";
+
 pub fn construct_network(meta_num: usize, contributions_num: usize) -> Normalised<MockNetwork> {
-    let deps_reader = BufReader::new(File::open("data/cargo_dependencies.csv").unwrap())
-        .split(b'\n')
-        .map(|l| l.unwrap())
-        .intersperse(vec![b'\n'])
-        .flatten()
-        .collect::<Vec<u8>>();
+    // Due to the fact we need to construct this network using some real, large data, and
+    // due to the fact this data lives elsewhere now (in the osrank-rs-ecosystems repo) we have
+    // to pass it externally. Unfortunately there seems to be no easy way to customise
+    // Criterion's CLI to pass extra arguments, so passing this via env vars seems the cleanest
+    // approach.
 
-    let deps_meta_reader = BufReader::new(File::open("data/cargo_dependencies_meta.csv").unwrap())
-        .split(b'\n')
-        .map(|l| l.unwrap())
-        .take(meta_num)
-        .intersperse(vec![b'\n']) // re-add the '\n'
-        .flatten()
-        .collect::<Vec<u8>>();
+    let cargo_deps = env::var(OSRANK_NIGHTLY_NETWORK_DEPS).ok();
+    let cargo_deps_meta = env::var(OSRANK_NIGHTLY_NETWORK_DEPS_META).ok();
+    let cargo_contributions = env::var(OSRANK_NIGHTLY_NETWORK_CONTRIBUTIONS).ok();
 
-    let contribs_reader = BufReader::new(File::open("data/cargo_contributions.csv").unwrap())
-        .split(b'\n')
-        .map(|l| l.unwrap())
-        .take(contributions_num)
-        .intersperse(vec![b'\n']) // re-add the '\n'
-        .flatten()
-        .collect::<Vec<u8>>();
+    match (cargo_deps, cargo_deps_meta, cargo_contributions) {
+        (Some(deps), Some(meta), Some(contribs)) => {
+            let deps_reader = BufReader::new(File::open(deps).unwrap())
+                .split(b'\n')
+                .map(|l| l.unwrap())
+                .intersperse(vec![b'\n'])
+                .flatten()
+                .collect::<Vec<u8>>();
 
-    let mock_ledger = MockLedger::default();
-    import_network::<MockNetwork, MockLedger, _>(
-        csv::Reader::from_reader(deps_reader.as_slice()),
-        csv::Reader::from_reader(deps_meta_reader.as_slice()),
-        csv::Reader::from_reader(contribs_reader.as_slice()),
-        None,
-        &mock_ledger,
-    )
-    .unwrap()
+            let deps_meta_reader = BufReader::new(File::open(meta).unwrap())
+                .split(b'\n')
+                .map(|l| l.unwrap())
+                .take(meta_num)
+                .intersperse(vec![b'\n']) // re-add the '\n'
+                .flatten()
+                .collect::<Vec<u8>>();
+
+            let contribs_reader = BufReader::new(File::open(contribs).unwrap())
+                .split(b'\n')
+                .map(|l| l.unwrap())
+                .take(contributions_num)
+                .intersperse(vec![b'\n']) // re-add the '\n'
+                .flatten()
+                .collect::<Vec<u8>>();
+
+            let mock_ledger = MockLedger::default();
+            import_network::<MockNetwork, MockLedger, _>(
+                csv::Reader::from_reader(deps_reader.as_slice()),
+                csv::Reader::from_reader(deps_meta_reader.as_slice()),
+                csv::Reader::from_reader(contribs_reader.as_slice()),
+                None,
+                &mock_ledger,
+            )
+            .unwrap()
+        }
+        _ => {
+            let msg = format!(
+                r###"The nightly benchmarks requires the following env var to be set:
+ - {} -> must contain a valid path to a `<platform>_dependencies.csv` file.
+ - {} -> must contain a valid path to a `<platform>_dependencies_meta.csv` file.
+ - {} -> must contain a valid path to a `<platform>_contributions.csv` file.
+
+ Please specify these env vars and try again.
+            "###,
+                OSRANK_NIGHTLY_NETWORK_DEPS,
+                OSRANK_NIGHTLY_NETWORK_DEPS_META,
+                OSRANK_NIGHTLY_NETWORK_CONTRIBUTIONS
+            );
+            panic!(msg)
+        }
+    }
 }
 
 pub fn run_osrank_naive(network: &Normalised<MockNetwork>, iter: u32, initial_seed: [u8; 32]) {
