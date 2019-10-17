@@ -1,9 +1,9 @@
 steps:
   - label: 'Nightly Benchmarks'
     command: |
-        wget https://github.com/oscoin/osrank-rs-ecosystems/raw/master/ecosystems/cargo_dependencies.csv;
-        wget https://github.com/oscoin/osrank-rs-ecosystems/raw/master/ecosystems/cargo_dependencies_meta.csv;
-        wget https://github.com/oscoin/osrank-rs-ecosystems/raw/master/ecosystems/cargo_contributions.csv;
+        curl https://raw.githubusercontent.com/oscoin/osrank-rs-ecosystems/master/ecosystems/cargo_dependencies.csv --output cargo_dependencies.csv;
+        curl https://raw.githubusercontent.com/oscoin/osrank-rs-ecosystems/master/ecosystems/cargo_dependencies_meta.csv --output cargo_dependencies_meta.csv;
+        curl https://raw.githubusercontent.com/oscoin/osrank-rs-ecosystems/master/ecosystems/cargo_contributions.csv --output cargo_contributions.csv;
         CRITERION_DEBUG=1 OSRANK_NIGHTLY_NETWORK_DEPS=cargo_dependencies.csv OSRANK_NIGHTLY_NETWORK_DEPS_META=cargo_dependencies_meta.csv OSRANK_NIGHTLY_NETWORK_CONTRIBUTIONS=cargo_contributions.csv cargo bench -- --measurement-time 50 --sample-size 10 nightly
     env:
       DOCKER_IMAGE: "gcr.io/opensourcecoin/osrank-build@sha256:d9cb3dce4f4af6d9a7db1669617638fbd5719498ecdf8246d99a4e724b65139b"
