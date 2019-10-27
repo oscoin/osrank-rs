@@ -149,10 +149,11 @@ where
             let walks = walks(seeds.seedset_iter().par_bridge(), network, ledger_view, rng)?;
             let mut trusted_node_ids: Vec<&Id<G::Node>> = Vec::new();
             for node in network.nodes() {
-                if rank_node::<L, G>(&walks, node.id().clone(), ledger_view) > Osrank::zero() {
+                if rank_node::<L, G>(&walks, node.id().clone(), ledger_view) > Fraction::from(*ledger_view.get_tau()) {
                     trusted_node_ids.push(&node.id());
                 }
             }
+
             Ok(WalkResult {
                 network_view: network.subgraph_by_nodes(trusted_node_ids),
                 walks,
@@ -473,6 +474,116 @@ mod tests {
             prop_osrank_is_approx_probability_distribution
                 as fn(Normalised<MockNetwork>) -> TestResult,
         );
+    }
+
+
+    // Test that our osrank algorithm ignores projects who do not meet tau threshold
+    #[test]
+    fn osrank_uses_tau() {
+        // build the example network
+        let mut network = Normalised::new(Network::default());
+
+        for node in &["p1", "p2", "p3"] {
+            network.add_node(
+                node.to_string(),
+                ArtifactType::Project {
+                    osrank: Zero::zero(),
+                },
+            )
+        }
+
+        for node in &["a1", "a2", "a3", "isle"] {
+            network.add_node(
+                node.to_string(),
+                ArtifactType::Account {
+                    osrank: Zero::zero(),
+                },
+            )
+        }
+
+        let edges = [
+            ("p1", "a1", Weight::new(3, 7)),
+            ("a1", "p1", Weight::new(1, 1)),
+            ("p1", "p2", Weight::new(4, 7)),
+            ("p2", "a2", Weight::new(1, 1)),
+            ("a2", "p2", Weight::new(1, 3)),
+            ("a2", "p3", Weight::new(2, 3)),
+            ("p3", "a2", Weight::new(11, 28)),
+            ("p3", "a3", Weight::new(1, 28)),
+            ("p3", "p1", Weight::new(2, 7)),
+            ("p3", "p2", Weight::new(2, 7)),
+            ("a3", "p3", Weight::new(1, 1)),
+        ];
+
+        for edge in &edges {
+            network.add_edge(
+                2,
+                &edge.0.to_string(),
+                &edge.1.to_string(),
+                edge.2.as_f64().unwrap(),
+                DependencyType::Influence(edge.2.as_f64().unwrap()),
+            )
+        }
+
+        let initial_seed = [0; 32];
+        let algo: Mock<
+            OsrankNaiveAlgorithm<
+                Normalised<MockNetwork>,
+                MockLedger,
+                MockAnnotator<Normalised<MockNetwork>>,
+            >,
+        > = Mock {
+            unmock: OsrankNaiveAlgorithm::default(),
+        };
+
+        // Run Algo for Tau == 0
+        let mut annotator1: MockAnnotator<Normalised<MockNetwork>> = Default::default();
+        let mut ctx1 = OsrankNaiveMockContext::default();
+        let seed_set1 = SeedSet::from(vec!["p1".to_string(), "p2".to_string(), "p3".to_string()]);
+        ctx1.seed_set = Some(&seed_set1);
+        ctx1.ledger_view.set_tau(0.0);
+        assert!(algo.execute(&mut ctx1, &network, &mut annotator1, initial_seed).is_ok());
+
+        // Run Algo for Non-Zero Tau
+        let mut annotator2: MockAnnotator<Normalised<MockNetwork>> = Default::default();
+        let mut ctx2 = OsrankNaiveMockContext::default();
+        let seed_set2 = SeedSet::from(vec!["p1".to_string(), "p2".to_string(), "p3".to_string()]);
+        ctx2.seed_set = Some(&seed_set2);
+        ctx2.ledger_view.set_tau(0.1);
+        assert!(algo.execute(&mut ctx2, &network, &mut annotator2, initial_seed).is_ok());
+
+        let annotator1_ranks = annotator1
+            .annotator
+            .iter()
+            .fold(Vec::new(), |mut ranks, info| {
+                println!("id: {} osrank: {}", info.0, info.1.to_f64().unwrap());
+                if info.1.to_f64().unwrap() > 0.0 {
+                  ranks.push(format!(
+                      "id: {} osrank: {}",
+                      info.0,
+                      info.1.to_f64().unwrap()
+                  ));
+                }
+                ranks
+            });
+
+        let annotator2_ranks = annotator2
+            .annotator
+            .iter()
+            .fold(Vec::new(), |mut ranks, info| {
+                println!("id: {} osrank: {}", info.0, info.1.to_f64().unwrap());
+                if info.1.to_f64().unwrap() > 0.0 {
+                  ranks.push(format!(
+                      "id: {} osrank: {}",
+                      info.0,
+                      info.1.to_f64().unwrap()
+                  ));
+                }
+                ranks
+            });
+
+        // We should have more nodes in round one than round two!
+        assert!(annotator1_ranks.len() > annotator2_ranks.len());
     }
 
     // Test that given the same initial seed, two osrank algorithms yields
