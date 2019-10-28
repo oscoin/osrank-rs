@@ -7,6 +7,8 @@ extern crate env_logger;
 
 #[macro_use]
 extern crate failure_derive;
+#[macro_use]
+extern crate arrayref;
 
 extern crate clap;
 extern crate failure;
@@ -34,6 +36,8 @@ use osrank::protocol_traits::ledger::{LedgerView, MockLedger};
 use osrank::types;
 use osrank::types::mock::{Mock, MockAnnotator, MockAnnotatorCsvExporter, MockNetwork};
 use osrank::types::walk::SeedSet;
+use rand::{RngCore, SeedableRng};
+use rand_xoshiro::Xoshiro256StarStar;
 
 #[derive(Debug, Fail)]
 enum AppError {
@@ -88,6 +92,7 @@ fn run_osrank(
     out_path: &str,
     osrank_algo: OsrankAlgorithm,
     ledger: MockLedger,
+    entropy_u64: u64,
     seed_set: Option<SeedSet<<<MockNetwork as Graph>::Node as GraphObject>::Id>>,
 ) -> Result<(), AppError> {
     let deps_csv_file = File::open(deps_file)?;
@@ -166,10 +171,14 @@ fn run_osrank(
         )
     );
 
-    let initial_seed = [0; 32];
     let mut annotator: MockAnnotator<Normalised<MockNetwork>> = Default::default();
 
-    algo.execute(&mut ctx, &network, &mut annotator, initial_seed)?;
+    algo.execute(
+        &mut ctx,
+        &network,
+        &mut annotator,
+        initial_seed_from_u64(entropy_u64),
+    )?;
 
     debug!("Exporting the ranks into a .csv file ...");
     // Export the ranks into a csv file.
@@ -178,6 +187,20 @@ fn run_osrank(
 
     debug!("Done.");
     Ok(())
+}
+
+/// Generates a new `RngSeed` for the algorithm from an input `u64` entropy.
+fn initial_seed_from_u64(entropy_u64: u64) -> [u8; 32] {
+    let mut seed = <Xoshiro256StarStar as SeedableRng>::seed_from_u64(entropy_u64);
+
+    let mut seed_slice = Vec::new();
+
+    (0..32).for_each(|_| {
+        seed_slice.push(seed.next_u64() as u8);
+    });
+
+    let r = array_ref!(seed_slice.as_slice(), 0, 32);
+    *r
 }
 
 /// Parses the algorithm to use from a stringly-typed representation into a
@@ -370,6 +393,14 @@ fn main() -> Result<(), AppError> {
                 .takes_value(true)
                 .required(false),
         )
+        .arg(
+            Arg::with_name("initial-seed")
+                .long("initial-seed")
+                .help("A unsigned 64bit integer to be used as seed for the RNG.")
+                .default_value("0")
+                .takes_value(true)
+                .required(false),
+        )
         .get_matches();
 
     let tau = matches
@@ -405,6 +436,11 @@ fn main() -> Result<(), AppError> {
         matches.value_of("maintain-prime-factor"),
     )?;
 
+    let initial_seed_u64 = matches
+        .value_of("initial-seed")
+        .and_then(|s: &str| s.parse::<u64>().ok())
+        .unwrap_or(0u64);
+
     let mut ledger_view = MockLedger::default();
     ledger_view.set_tau(tau);
     ledger_view.set_random_walks_num(r);
@@ -429,6 +465,7 @@ fn main() -> Result<(), AppError> {
             .and_then(parse_algorithm)
             .expect("Failed to parse algorithm. Possible choices: naive|incremental."),
         ledger_view,
+        initial_seed_u64,
         matches
             .value_of("seed-set")
             .and_then(|ss| parse_seed_set(ss).expect("Seed set parsing failed.")),

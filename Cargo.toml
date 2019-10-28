@@ -48,7 +48,7 @@ required-features = ["build-binary"]
 
 [features]
 
-build-binary = ["reqwest", "clap", "failure", "failure_derive"]
+build-binary = ["reqwest", "clap", "failure", "failure_derive", "arrayref"]
 
 [dependencies]
 
@@ -86,6 +86,7 @@ reqwest = { version = "^0.9", optional = true }
 clap = { version = "^2.33", optional = true }
 failure = { version = "0.1.5", optional = true}
 failure_derive = { version = "0.1.5", optional = true}
+arrayref = { version = "0.3.5", optional = true}
 
 [dev-dependencies]
 pretty_assertions = "0.6.1"
