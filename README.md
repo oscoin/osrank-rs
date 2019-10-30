@@ -26,8 +26,8 @@ Table of Contents
 
 # Getting started
 
-**If you are new to the project, you might want to start by reading the 
-[specification](https://github.com/oscoin/docs/raw/master/osrank/spec/osrank_spec.pdf)**.
+**If you are new to the project, you might want to start by reading the
+[specification](https://github.com/oscoin/osrank-spec/raw/master/osrank_spec.pdf)**.
 This document contains information about the osrank's basic model, the set of
 open questions remaining to the answered as well as a general discussion
 about a possible API.
