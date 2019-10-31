@@ -2,10 +2,11 @@
 #![warn(clippy::all)]
 
 use num_traits::Zero;
-use oscoin_graph_api::{Direction, EdgeRef, Graph, GraphObject};
+use oscoin_graph_api::{types, Direction, EdgeRef, Graph, GraphObject, Node};
 
-use super::{size_from_rank, Exporter, NodeType, Rank, RgbColor};
-use crate::types::mock::KeyValueAnnotator;
+use super::{size_from_rank, Exporter, Rank, RgbColor};
+use crate::types::mock::{KeyValueAnnotator, MockNetwork};
+use crate::types::Osrank;
 
 use std::convert::TryInto;
 use std::fs::{File, OpenOptions};
@@ -166,13 +167,12 @@ fn write_node<N, V>(
     out: &mut File,
 ) -> Result<(), ExportError>
 where
-    N: GraphObject,
+    N: GraphObject<Data = types::NodeData<V>>,
     N::Id: IntoGexfXml + Clone + TryInto<String> + Eq + Hash,
-    <N as GraphObject>::Data: Clone + Into<NodeType>,
     V: Into<Rank<f64>> + Zero + Clone,
 {
     let data: <N as GraphObject>::Data = (*node).data().clone();
-    let node_type: NodeType = data.clone().into();
+    let node_type: types::NodeType = data.clone().node_type;
     let rank: Rank<f64> = annotator
         .annotator
         .get(&node.id())
@@ -216,9 +216,9 @@ fn write_graph<G, V>(
     out: &mut File,
 ) -> Result<(), ExportError>
 where
-    G: Graph,
+    G: Graph<NodeData = types::NodeData<V>>,
+    <G as Graph>::Node: Node<types::NodeData<V>>,
     <G::Node as GraphObject>::Id: IntoGexfXml + Clone + TryInto<String> + Eq + Hash,
-    <G::Node as GraphObject>::Data: Clone + Into<NodeType>,
     <G::Edge as GraphObject>::Id: IntoGexfXml + Clone,
     V: Into<Rank<f64>> + Zero + Clone,
 {
@@ -254,9 +254,9 @@ fn export_graph_impl<G, V>(
     out: &Path,
 ) -> Result<(), ExportError>
 where
-    G: Graph,
+    G: Graph<NodeData = types::NodeData<V>>,
+    <G as Graph>::Node: Node<types::NodeData<V>>,
     <G::Node as GraphObject>::Id: IntoGexfXml + Clone + TryInto<String> + Eq + Hash,
-    <G::Node as GraphObject>::Data: Clone + Into<NodeType>,
     <G::Edge as GraphObject>::Id: IntoGexfXml + Clone,
     V: Into<Rank<f64>> + Zero + Clone,
 {
@@ -295,14 +295,7 @@ where
     }
 }
 
-impl<'a, G, V> Exporter for GexfExporter<'a, G, V>
-where
-    G: Graph,
-    <G::Node as GraphObject>::Id: IntoGexfXml + Clone + TryInto<String> + Eq + Hash,
-    <G::Node as GraphObject>::Data: Clone + Into<NodeType>,
-    <G::Edge as GraphObject>::Id: IntoGexfXml + Clone,
-    V: Into<Rank<f64>> + Zero + Clone,
-{
+impl<'a> Exporter for GexfExporter<'a, MockNetwork<f64>, Osrank> {
     type ExporterOutput = ();
     type ExporterError = ExportError;
     fn export(self) -> Result<Self::ExporterOutput, Self::ExporterError> {

@@ -17,7 +17,7 @@ pub type DenseMatrix<N> = Array2<N>;
 /// into a CSC).
 pub fn transpose_storage_naive<N>(matrix: &SparseMatrix<N>) -> SparseMatrix<N>
 where
-    N: Num + Copy + Signed + PartialOrd + Default,
+    N: Clone + Num + Signed + PartialOrd,
 {
     CsMat::csr_from_dense(matrix.to_dense().t().view(), N::zero())
 }
@@ -25,7 +25,7 @@ where
 /// Transpose a CSR matrix. Panics if a CSC matrix is given.
 pub fn transpose_storage_csr<N>(matrix: &SparseMatrix<N>) -> SparseMatrix<N>
 where
-    N: Num + Copy + Signed + PartialOrd + Default,
+    N: Num + Copy + Signed + PartialOrd,
 {
     csr_transpose_impl(&matrix.view())
 }

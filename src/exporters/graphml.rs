@@ -1,10 +1,11 @@
 #![allow(unknown_lints)]
 #![warn(clippy::all)]
 
-use crate::types::mock::KeyValueAnnotator;
-use oscoin_graph_api::{Direction, Edge, EdgeRef, Graph, GraphObject};
+use crate::types::mock::{KeyValueAnnotator, MockNetwork};
+use crate::types::Osrank;
+use oscoin_graph_api::{types, Direction, Edge, EdgeRef, Graph, GraphObject, Node};
 
-use super::{size_from_rank, Exporter, NodeType, Rank, RgbColor};
+use super::{size_from_rank, Exporter, Rank, RgbColor};
 
 use num_traits::Zero;
 use std::convert::TryInto;
@@ -175,9 +176,8 @@ fn write_node<N, V>(
     out: &mut File,
 ) -> Result<(), ExportError>
 where
-    N: GraphObject,
+    N: GraphObject<Data = types::NodeData<V>>,
     V: Into<Rank<f64>> + Zero + Clone,
-    <N as GraphObject>::Data: Clone + Into<NodeType> + Into<Rank<f64>>,
     <N as GraphObject>::Id: IntoGraphMlXml + Clone + TryInto<String> + Eq + Hash,
 {
     let data: <N as GraphObject>::Data = (*node).data().clone();
@@ -187,7 +187,7 @@ where
         .and_then(|r| Some((*r).clone()))
         .unwrap_or_else(V::zero)
         .into();
-    let node_type: NodeType = data.clone().into();
+    let node_type: types::NodeType = data.clone().node_type;
     let lbl = node
         .id()
         .clone()
@@ -245,9 +245,9 @@ fn write_graph<G, V>(
     out: &mut File,
 ) -> Result<(), ExportError>
 where
-    G: Graph,
+    G: Graph<NodeData = types::NodeData<V>>,
+    <G as Graph>::Node: Node<types::NodeData<V>>,
     V: Into<Rank<f64>> + Zero + Clone,
-    <G::Node as GraphObject>::Data: Clone + Into<NodeType> + Into<Rank<f64>>,
     <G::Node as GraphObject>::Id: IntoGraphMlXml + Clone + TryInto<String> + Eq + Hash,
     <G::Edge as GraphObject>::Id: IntoGraphMlXml + Clone,
     <G as Graph>::Weight: IntoGraphMlXml + Zero,
@@ -284,9 +284,9 @@ pub fn export_graph_impl<G, V>(
     out: &Path,
 ) -> Result<(), ExportError>
 where
-    G: Graph,
+    G: Graph<NodeData = types::NodeData<V>>,
+    <G as Graph>::Node: Node<types::NodeData<V>>,
     V: Into<Rank<f64>> + Zero + Clone,
-    <G::Node as GraphObject>::Data: Clone + Into<NodeType> + Into<Rank<f64>>,
     <G::Node as GraphObject>::Id: IntoGraphMlXml + Clone + TryInto<String> + Eq + Hash,
     <G::Edge as GraphObject>::Id: IntoGraphMlXml + Clone,
     <G as Graph>::Weight: IntoGraphMlXml + Zero,
@@ -326,15 +326,7 @@ where
     }
 }
 
-impl<'a, G, V> Exporter for GraphMlExporter<'a, G, V>
-where
-    G: Graph,
-    V: Into<Rank<f64>> + Zero + Clone,
-    <G::Node as GraphObject>::Data: Clone + Into<NodeType> + Into<Rank<f64>>,
-    <G::Node as GraphObject>::Id: IntoGraphMlXml + Clone + TryInto<String> + Eq + Hash,
-    <G::Edge as GraphObject>::Id: IntoGraphMlXml + Clone,
-    <G as Graph>::Weight: IntoGraphMlXml + Zero,
-{
+impl<'a> Exporter for GraphMlExporter<'a, MockNetwork<f64>, Osrank> {
     type ExporterOutput = ();
     type ExporterError = ExportError;
     fn export(self) -> Result<Self::ExporterOutput, Self::ExporterError> {

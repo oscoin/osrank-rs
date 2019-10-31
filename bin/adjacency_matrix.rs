@@ -27,7 +27,7 @@ use osrank::importers::csv::{
     ContributionsMetadata, CsvImportError, DepMetaRow, DependenciesMetadata, DisplayAsF64,
 };
 use osrank::linalg::{transpose_storage_naive, DenseMatrix, SparseMatrix};
-use osrank::types::HyperParams;
+use osrank::protocol_traits::ledger::{LedgerView, MockLedger};
 use sprs::binop::{add_mat_same_storage, scalar_mul_mat};
 use sprs::CsMat;
 
@@ -228,8 +228,7 @@ fn build_adjacency_matrix(
         dep_adj_matrix.cols()
     );
     println!("Assembling the contribution matrix...");
-    let con_adj_matrix =
-        new_contribution_adjacency_matrix(&deps_meta, &contribs_meta, Box::new(f64::from))?;
+    let con_adj_matrix = new_contribution_adjacency_matrix(&deps_meta, &contribs_meta)?;
     println!(
         "Generated a matrix of {}x{}",
         con_adj_matrix.rows(),
@@ -242,7 +241,7 @@ fn build_adjacency_matrix(
         &dep_adj_matrix,
         &con_adj_matrix,
         &maintenance_matrix,
-        &HyperParams::default(),
+        &MockLedger::default().get_hyperparams(),
     );
 
     println!("assert_normalised(network_matrix)");
@@ -341,7 +340,8 @@ mod tests {
         hadamard_mul, hadamard_mul_naive, normalise_rows, normalise_rows_mut,
         transpose_storage_csr, SparseMatrix,
     };
-    use osrank::types::{HyperParams, Weight};
+    use osrank::protocol_traits::ledger::{LedgerView, MockLedger};
+    use osrank::types::Weight;
     use pretty_assertions::assert_eq;
     use quickcheck::{Arbitrary, Gen};
     use rand::Rng;
@@ -552,7 +552,7 @@ mod tests {
         );
         let m = CsMat::csr_from_dense(arr2(&[[o, z, z], [z, o, z], [z, o, z]]).view(), z);
 
-        let network = new_network_matrix(&d, &c, &m, &HyperParams::default());
+        let network = new_network_matrix(&d, &c, &m, &MockLedger::default().get_hyperparams());
 
         let expected = arr2(&[
             [z, Weight::new(4, 7), z, Weight::new(3, 7), z, z],
@@ -656,12 +656,7 @@ mod tests {
             .collect(),
         };
 
-        let actual = super::new_contribution_adjacency_matrix(
-            &dep_meta,
-            &contribs,
-            Box::new(|c| Weight::new(c, 1)),
-        )
-        .unwrap();
+        let actual = super::new_contribution_adjacency_matrix(&dep_meta, &contribs).unwrap();
 
         let expected = arr2(&[
             [Weight::new(118, 1), Weight::new(32, 1), Weight::zero()],

@@ -11,7 +11,7 @@ use clap::{App, Arg};
 
 use oscoin_graph_api::GraphAlgorithm;
 use osrank::algorithm::naive::{OsrankNaiveAlgorithm, OsrankNaiveMockContext};
-use osrank::algorithm::{Normalised, OsrankError};
+use osrank::algorithm::OsrankError;
 use osrank::exporters::gexf::GexfExporter;
 use osrank::exporters::graphml::GraphMlExporter;
 use osrank::exporters::{gexf, graphml, Exporter};
@@ -107,29 +107,25 @@ fn main() -> Result<(), AppError> {
     debug!("Importing the network...");
 
     let algo: Mock<
-        OsrankNaiveAlgorithm<
-            Normalised<MockNetwork>,
-            MockLedger,
-            MockAnnotator<Normalised<MockNetwork>>,
-        >,
+        OsrankNaiveAlgorithm<MockNetwork<f64>, MockLedger<f64>, MockAnnotator<MockNetwork<f64>>>,
     > = Mock {
         unmock: OsrankNaiveAlgorithm::default(),
     };
     let mut ctx = OsrankNaiveMockContext::default();
     ctx.ledger_view.set_random_walks_num(10);
 
-    let mut network = import_network::<MockNetwork, MockLedger, File>(
+    let mut network = import_network::<MockNetwork<f64>, File>(
         csv::Reader::from_reader(deps_csv_file),
         csv::Reader::from_reader(deps_meta_csv_file),
         csv::Reader::from_reader(contribs_csv_file),
         None,
-        &ctx.ledger_view,
+        &ctx.ledger_view.get_hyperparams(),
     )?;
 
     debug!("Calculating the osrank (mock naive algorithm)...");
 
     let initial_seed = [0; 32];
-    let mut annotator: MockAnnotator<Normalised<MockNetwork>> = Default::default();
+    let mut annotator: MockAnnotator<MockNetwork<f64>> = Default::default();
 
     algo.execute(&mut ctx, &mut network, &mut annotator, initial_seed)?;
 
