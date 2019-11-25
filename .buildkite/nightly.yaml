@@ -11,3 +11,4 @@ steps:
       docker: "true"
     artifact_paths:
       - "target/criterion/**/report/*"
+    timeout_in_minutes: 120
